@@ -50,6 +50,9 @@ fn run_add(conn: &Connection, args: AddArgs) -> anyhow::Result<()> {
 }
 
 fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
+    if let Some(ref m) = args.month {
+        validate_month_format(m)?;
+    }
     let month = args
         .month
         .or_else(|| Some(chrono::Local::now().format("%Y-%m").to_string()));
@@ -438,6 +441,9 @@ const EXPENSE_CATEGORIES: &[model::Category] = &[
 ];
 
 fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
+    if let Some(ref m) = args.month {
+        validate_month_format(m)?;
+    }
     let month = args
         .month
         .unwrap_or_else(|| chrono::Local::now().format("%Y-%m").to_string());
@@ -557,6 +563,13 @@ fn format_month_display(month: &str) -> String {
         (Some(y), Some(m)) => format!("{y}年{m}月"),
         _ => month.to_string(),
     }
+}
+
+/// `--month` 引数が YYYY-MM 形式かどうかを検証する。
+fn validate_month_format(month: &str) -> anyhow::Result<()> {
+    chrono::NaiveDate::parse_from_str(&format!("{}-01", month), "%Y-%m-%d")
+        .context("月は YYYY-MM 形式で入力してください")?;
+    Ok(())
 }
 
 /// 金額に符号を付けてフォーマットする（例: 80000 → "+80,000円"）。
@@ -709,6 +722,40 @@ mod tests {
         );
 
         assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 異常系: list に不正な --month 書式を渡すとエラーになること
+    #[test]
+    fn run_list_rejects_invalid_month_format() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_list(
+            &conn,
+            ListArgs {
+                month: Some("2025/04".to_string()),
+                category: None,
+            },
+        );
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: summary に不正な --month 書式を渡すとエラーになること
+    #[test]
+    fn run_summary_rejects_invalid_month_format() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_summary(
+            &conn,
+            SummaryArgs {
+                month: Some("invalid".to_string()),
+                by_category: false,
+            },
+        );
+
+        assert!(result.is_err());
         Ok(())
     }
 
