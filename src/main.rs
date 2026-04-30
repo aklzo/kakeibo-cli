@@ -9,7 +9,7 @@ use anyhow::Context;
 use clap::Parser;
 use rusqlite::Connection;
 
-use cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, SummaryArgs};
+use cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, ProgressArgs, SummaryArgs};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Delete(args) => run_delete(&conn, args),
         Commands::Summary(args) => run_summary(&conn, args),
         Commands::Budget(args) => run_budget(&conn, args),
+        Commands::Progress(args) => run_progress(&conn, args),
     }
 }
 
@@ -171,6 +172,252 @@ fn run_budget_show(conn: &Connection) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+fn run_progress(conn: &Connection, args: ProgressArgs) -> anyhow::Result<()> {
+    let current_month = chrono::Local::now().format("%Y-%m").to_string();
+    run_progress_for_month(conn, &args, &current_month)
+}
+
+fn run_progress_for_month(
+    conn: &Connection,
+    args: &ProgressArgs,
+    current_month: &str,
+) -> anyhow::Result<()> {
+    let show_total = !args.by_category;
+    let show_by_category = !args.total;
+
+    let current_txs = repository::list(
+        conn,
+        &repository::TransactionFilter {
+            month: Some(current_month.to_string()),
+            category: None,
+        },
+    )?;
+    let current_totals = build_category_totals(&current_txs);
+    let current_expense: i64 = EXPENSE_CATEGORIES
+        .iter()
+        .filter_map(|c| current_totals.get(c).copied())
+        .sum();
+
+    if args.last_month {
+        print_last_month_progress(
+            conn,
+            current_month,
+            &current_totals,
+            current_expense,
+            show_total,
+            show_by_category,
+        )
+    } else {
+        print_budget_progress(
+            conn,
+            current_month,
+            &current_totals,
+            current_expense,
+            show_total,
+            show_by_category,
+        )
+    }
+}
+
+fn print_budget_progress(
+    conn: &Connection,
+    current_month: &str,
+    current_totals: &HashMap<model::Category, i64>,
+    current_expense: i64,
+    show_total: bool,
+    show_by_category: bool,
+) -> anyhow::Result<()> {
+    let budgets = repository::list_budgets(conn)?;
+    let total_budget = budgets.iter().find(|b| b.category.is_none());
+    let category_budgets: HashMap<model::Category, i64> = budgets
+        .iter()
+        .filter_map(|b| b.category.map(|c| (c, b.amount)))
+        .collect();
+
+    if show_total && total_budget.is_none() {
+        anyhow::bail!(
+            "月全体の予算が設定されていません。`budget set --total <金額>` で設定してください"
+        );
+    }
+    if show_by_category && category_budgets.is_empty() {
+        anyhow::bail!(
+            "カテゴリ別予算が設定されていません。`budget set --category <カテゴリ> <金額>` で設定してください"
+        );
+    }
+
+    println!(
+        "== {} 消費進捗率（予算対比）==",
+        format_month_display(current_month)
+    );
+
+    if show_total {
+        if let Some(tb) = total_budget {
+            let pct = calc_percentage(current_expense, tb.amount);
+            println!();
+            println!("[ 月全体 ]");
+            println!(
+                "{}{}",
+                pad_display("予算上限", 10),
+                right_align(&format_amount(tb.amount), 12),
+            );
+            println!(
+                "{}{}",
+                pad_display("現在支出", 10),
+                right_align(&format_amount(current_expense), 12),
+            );
+            println!(
+                "{}{}  [{}]",
+                pad_display("進捗率", 10),
+                right_align(&format!("{:.1}%", pct), 8),
+                progress_bar(pct),
+            );
+        }
+    }
+
+    if show_by_category {
+        println!();
+        println!("[ カテゴリ別 ]");
+        for category in EXPENSE_CATEGORIES {
+            let base = match category_budgets.get(category) {
+                Some(&b) => b,
+                None => continue,
+            };
+            let current = current_totals.get(category).copied().unwrap_or(0);
+            let pct = calc_percentage(current, base);
+            println!(
+                "{}  {} / {}  {}  [{}]",
+                pad_display(category.display_name(), 12),
+                right_align(&format_amount_raw(current), 8),
+                right_align(&format_amount(base), 10),
+                right_align(&format!("{:.1}%", pct), 7),
+                progress_bar(pct),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn print_last_month_progress(
+    conn: &Connection,
+    current_month: &str,
+    current_totals: &HashMap<model::Category, i64>,
+    current_expense: i64,
+    show_total: bool,
+    show_by_category: bool,
+) -> anyhow::Result<()> {
+    let last = prev_month(current_month)?;
+    let last_txs = repository::list(
+        conn,
+        &repository::TransactionFilter {
+            month: Some(last.clone()),
+            category: None,
+        },
+    )?;
+
+    if last_txs.is_empty() {
+        anyhow::bail!(
+            "昨月（{}）の取引データがありません",
+            format_month_display(&last)
+        );
+    }
+
+    let last_totals = build_category_totals(&last_txs);
+    let last_expense: i64 = EXPENSE_CATEGORIES
+        .iter()
+        .filter_map(|c| last_totals.get(c).copied())
+        .sum();
+
+    println!(
+        "== {} 消費進捗率（昨月実績対比）==",
+        format_month_display(current_month)
+    );
+
+    if show_total {
+        let pct = calc_percentage(current_expense, last_expense);
+        println!();
+        println!("[ 月全体 ]");
+        println!(
+            "{}{}",
+            pad_display("昨月実績", 10),
+            right_align(&format_amount(last_expense), 12),
+        );
+        println!(
+            "{}{}",
+            pad_display("現在支出", 10),
+            right_align(&format_amount(current_expense), 12),
+        );
+        println!(
+            "{}{}  [{}]",
+            pad_display("進捗率", 10),
+            right_align(&format!("{:.1}%", pct), 8),
+            progress_bar(pct),
+        );
+    }
+
+    if show_by_category {
+        println!();
+        println!("[ カテゴリ別 ]");
+        for category in EXPENSE_CATEGORIES {
+            let base = last_totals.get(category).copied().unwrap_or(0);
+            if base == 0 {
+                continue;
+            }
+            let current = current_totals.get(category).copied().unwrap_or(0);
+            let pct = calc_percentage(current, base);
+            println!(
+                "{}  {} / {}  {}  [{}]",
+                pad_display(category.display_name(), 12),
+                right_align(&format_amount_raw(current), 8),
+                right_align(&format_amount(base), 10),
+                right_align(&format!("{:.1}%", pct), 7),
+                progress_bar(pct),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// 進捗率を計算する（0.0〜100.0+）。base が 0 の場合は 0.0 を返す。
+fn calc_percentage(current: i64, base: i64) -> f64 {
+    if base == 0 {
+        return 0.0;
+    }
+    (current as f64 / base as f64) * 100.0
+}
+
+/// 10 分割のプログレスバー文字列を返す（例: 80% → "████████░░"）。
+fn progress_bar(percentage: f64) -> String {
+    let filled = ((percentage / 100.0).min(1.0) * 10.0).floor() as usize;
+    let empty = 10 - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+/// 金額をカンマ区切りで「円」なしにフォーマットする（例: 1500 → "1,500"）。
+fn format_amount_raw(amount: i64) -> String {
+    let s = format_amount(amount);
+    s.trim_end_matches('円').to_string()
+}
+
+/// "YYYY-MM" の前月を "YYYY-MM" 形式で返す。
+fn prev_month(month: &str) -> anyhow::Result<String> {
+    let mut parts = month.splitn(2, '-');
+    let year: i32 = parts
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("月の形式が正しくありません: {}", month))?;
+    let m: u32 = parts
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("月の形式が正しくありません: {}", month))?;
+    if m == 1 {
+        Ok(format!("{:04}-12", year - 1))
+    } else {
+        Ok(format!("{:04}-{:02}", year, m - 1))
+    }
 }
 
 /// 支出カテゴリの表示順序。
@@ -358,7 +605,7 @@ fn format_amount(amount: i64) -> String {
 mod tests {
     use super::*;
     use crate::{
-        cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, DeleteArgs, EditArgs, ListArgs, SummaryArgs},
+        cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, DeleteArgs, EditArgs, ListArgs, ProgressArgs, SummaryArgs},
         db,
         model::{Category, Transaction},
         repository,
@@ -811,6 +1058,147 @@ mod tests {
         let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show });
 
         assert!(result.is_ok());
+        Ok(())
+    }
+
+    fn default_progress_args() -> ProgressArgs {
+        ProgressArgs { total: false, by_category: false, last_month: false }
+    }
+
+    // 正常系: progress（デフォルト）が予算設定済みで Ok を返すこと
+    #[test]
+    fn run_progress_default_mode_with_budgets_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+        run_add(
+            &conn,
+            AddArgs {
+                name: "食費".to_string(),
+                amount: 5000,
+                category: Category::Food,
+                date: Some("2025-04-01".to_string()),
+                memo: None,
+            },
+        )?;
+
+        let result = run_progress_for_month(&conn, &default_progress_args(), "2025-04");
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: progress --total が月全体予算設定済みで Ok を返すこと
+    #[test]
+    fn run_progress_total_only_with_budget_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+
+        let args = ProgressArgs { total: true, by_category: false, last_month: false };
+        let result = run_progress_for_month(&conn, &args, "2025-04");
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: progress --by-category がカテゴリ予算設定済みで Ok を返すこと
+    #[test]
+    fn run_progress_by_category_with_budget_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+
+        let args = ProgressArgs { total: false, by_category: true, last_month: false };
+        let result = run_progress_for_month(&conn, &args, "2025-04");
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 異常系: 月全体予算未設定で progress --total はエラーになること
+    #[test]
+    fn run_progress_total_without_budget_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let args = ProgressArgs { total: true, by_category: false, last_month: false };
+        let result = run_progress_for_month(&conn, &args, "2025-04");
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: カテゴリ予算未設定で progress --by-category はエラーになること
+    #[test]
+    fn run_progress_by_category_without_budget_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let args = ProgressArgs { total: false, by_category: true, last_month: false };
+        let result = run_progress_for_month(&conn, &args, "2025-04");
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 正常系: progress --last-month が昨月データありで Ok を返すこと
+    #[test]
+    fn run_progress_last_month_with_data_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        // 昨月（2025-04）のデータを追加
+        run_add(
+            &conn,
+            AddArgs {
+                name: "食費".to_string(),
+                amount: 30000,
+                category: Category::Food,
+                date: Some("2025-04-01".to_string()),
+                memo: None,
+            },
+        )?;
+
+        let args = ProgressArgs { total: false, by_category: false, last_month: true };
+        let result = run_progress_for_month(&conn, &args, "2025-05");
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 異常系: progress --last-month が昨月データなしでエラーになること
+    #[test]
+    fn run_progress_last_month_without_data_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let args = ProgressArgs { total: false, by_category: false, last_month: true };
+        let result = run_progress_for_month(&conn, &args, "2025-05");
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 正常系: calc_percentage が正しく計算されること
+    #[test]
+    fn calc_percentage_computes_correctly() {
+        assert_eq!(calc_percentage(120000, 150000), 80.0);
+        assert_eq!(calc_percentage(0, 100), 0.0);
+        assert_eq!(calc_percentage(150, 100), 150.0);
+        assert_eq!(calc_percentage(0, 0), 0.0);
+    }
+
+    // 正常系: プログレスバーが正しいセグメント数で表示されること
+    #[test]
+    fn progress_bar_shows_correct_segments() {
+        assert_eq!(progress_bar(0.0), "░░░░░░░░░░");
+        assert_eq!(progress_bar(53.3), "█████░░░░░");
+        assert_eq!(progress_bar(80.0), "████████░░");
+        assert_eq!(progress_bar(88.9), "████████░░");
+        assert_eq!(progress_bar(100.0), "██████████");
+        assert_eq!(progress_bar(106.7), "██████████");
+    }
+
+    // 正常系: prev_month が前月を正しく返すこと
+    #[test]
+    fn prev_month_returns_correct_month() -> anyhow::Result<()> {
+        assert_eq!(prev_month("2025-05")?, "2025-04");
+        assert_eq!(prev_month("2025-01")?, "2024-12");
+        assert_eq!(prev_month("2025-12")?, "2025-11");
         Ok(())
     }
 }

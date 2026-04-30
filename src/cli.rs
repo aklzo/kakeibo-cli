@@ -24,6 +24,8 @@ pub enum Commands {
     Summary(SummaryArgs),
     /// 予算を管理する
     Budget(BudgetArgs),
+    /// 消費進捗率を表示する
+    Progress(ProgressArgs),
 }
 
 /// `add` サブコマンドの引数
@@ -136,6 +138,22 @@ pub struct ListArgs {
     /// カテゴリ絞り込み
     #[arg(short = 'c', long)]
     pub category: Option<Category>,
+}
+
+/// `progress` サブコマンドの引数
+#[derive(Args)]
+pub struct ProgressArgs {
+    /// 月全体のみ表示する（--by-category との併用不可）
+    #[arg(long, conflicts_with = "by_category")]
+    pub total: bool,
+
+    /// カテゴリ別のみ表示する（--total との併用不可）
+    #[arg(long, conflicts_with = "total")]
+    pub by_category: bool,
+
+    /// 昨月実績対比モード
+    #[arg(long)]
+    pub last_month: bool,
 }
 
 #[cfg(test)]
@@ -401,5 +419,78 @@ mod tests {
         };
         assert_eq!(args.id, 5);
         Ok(())
+    }
+
+    // 正常系: progress がオプションなしでパースされること
+    #[test]
+    fn progress_args_parses_without_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "progress"])?;
+        let Commands::Progress(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(!args.total);
+        assert!(!args.by_category);
+        assert!(!args.last_month);
+        Ok(())
+    }
+
+    // 正常系: progress --total が正しくパースされること
+    #[test]
+    fn progress_args_parses_total_flag() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "progress", "--total"])?;
+        let Commands::Progress(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(args.total);
+        assert!(!args.by_category);
+        assert!(!args.last_month);
+        Ok(())
+    }
+
+    // 正常系: progress --by-category が正しくパースされること
+    #[test]
+    fn progress_args_parses_by_category_flag() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "progress", "--by-category"])?;
+        let Commands::Progress(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(!args.total);
+        assert!(args.by_category);
+        assert!(!args.last_month);
+        Ok(())
+    }
+
+    // 正常系: progress --last-month が正しくパースされること
+    #[test]
+    fn progress_args_parses_last_month_flag() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "progress", "--last-month"])?;
+        let Commands::Progress(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(!args.total);
+        assert!(!args.by_category);
+        assert!(args.last_month);
+        Ok(())
+    }
+
+    // 正常系: progress --last-month --total が正しくパースされること
+    #[test]
+    fn progress_args_parses_last_month_with_total() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "progress", "--last-month", "--total"])?;
+        let Commands::Progress(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(args.total);
+        assert!(!args.by_category);
+        assert!(args.last_month);
+        Ok(())
+    }
+
+    // 異常系: --total と --by-category の同時指定はエラーになること
+    #[test]
+    fn progress_args_total_and_by_category_are_exclusive() {
+        let result =
+            Cli::try_parse_from(["kakeibo", "progress", "--total", "--by-category"]);
+        assert!(result.is_err());
     }
 }
