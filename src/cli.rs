@@ -16,6 +16,10 @@ pub enum Commands {
     Add(AddArgs),
     /// 取引の一覧を表示する
     List(ListArgs),
+    /// 取引を編集する
+    Edit(EditArgs),
+    /// 取引を削除する
+    Delete(DeleteArgs),
 }
 
 /// `add` サブコマンドの引数
@@ -40,6 +44,40 @@ pub struct AddArgs {
     /// メモ
     #[arg(short = 'm', long)]
     pub memo: Option<String>,
+}
+
+/// `edit` サブコマンドの引数
+#[derive(Args)]
+pub struct EditArgs {
+    /// 更新対象の取引 ID
+    pub id: i64,
+
+    /// 名称
+    #[arg(short = 'n', long)]
+    pub name: Option<String>,
+
+    /// 金額（円、正の整数）
+    #[arg(short = 'a', long)]
+    pub amount: Option<i64>,
+
+    /// カテゴリ識別子（例: food, fixed, income）
+    #[arg(short = 'c', long)]
+    pub category: Option<Category>,
+
+    /// 日付（YYYY-MM-DD）
+    #[arg(short = 'd', long)]
+    pub date: Option<String>,
+
+    /// メモ
+    #[arg(short = 'm', long)]
+    pub memo: Option<String>,
+}
+
+/// `delete` サブコマンドの引数
+#[derive(Args)]
+pub struct DeleteArgs {
+    /// 削除対象の取引 ID
+    pub id: i64,
 }
 
 /// `list` サブコマンドの引数
@@ -153,5 +191,47 @@ mod tests {
             "invalid",
         ]);
         assert!(result.is_err());
+    }
+
+    // 正常系: edit の ID とオプションが正しくパースされること
+    #[test]
+    fn edit_args_parses_id_and_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "kakeibo", "edit", "3", "--amount", "2000", "--memo", "新しいメモ",
+        ])?;
+        let Commands::Edit(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.id, 3);
+        assert_eq!(args.amount, Some(2000));
+        assert_eq!(args.memo.as_deref(), Some("新しいメモ"));
+        assert!(args.name.is_none());
+        assert!(args.category.is_none());
+        assert!(args.date.is_none());
+        Ok(())
+    }
+
+    // 正常系: edit がオプションなしで ID だけパースされること
+    #[test]
+    fn edit_args_parses_id_only() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "edit", "7"])?;
+        let Commands::Edit(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.id, 7);
+        assert!(args.name.is_none());
+        assert!(args.amount.is_none());
+        Ok(())
+    }
+
+    // 正常系: delete の ID が正しくパースされること
+    #[test]
+    fn delete_args_parses_id() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "delete", "5"])?;
+        let Commands::Delete(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.id, 5);
+        Ok(())
     }
 }
