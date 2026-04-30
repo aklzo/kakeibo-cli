@@ -22,6 +22,8 @@ pub enum Commands {
     Delete(DeleteArgs),
     /// 月次集計を表示する
     Summary(SummaryArgs),
+    /// 予算を管理する
+    Budget(BudgetArgs),
 }
 
 /// `add` サブコマンドの引数
@@ -80,6 +82,36 @@ pub struct EditArgs {
 pub struct DeleteArgs {
     /// 削除対象の取引 ID
     pub id: i64,
+}
+
+/// `budget` サブコマンドの引数
+#[derive(Args)]
+pub struct BudgetArgs {
+    #[command(subcommand)]
+    pub command: BudgetCommands,
+}
+
+#[derive(Subcommand)]
+pub enum BudgetCommands {
+    /// 予算上限を設定する
+    Set(BudgetSetArgs),
+    /// 予算設定を表示する
+    Show,
+}
+
+/// `budget set` サブコマンドの引数
+#[derive(Args)]
+pub struct BudgetSetArgs {
+    /// 月全体の上限金額（--category との併用不可）
+    #[arg(long, conflicts_with = "category")]
+    pub total: Option<i64>,
+
+    /// カテゴリ識別子（例: food, fixed）
+    #[arg(long, conflicts_with = "total", requires = "amount")]
+    pub category: Option<Category>,
+
+    /// カテゴリ別予算の上限金額（--category 使用時に指定）
+    pub amount: Option<i64>,
 }
 
 /// `summary` サブコマンドの引数
@@ -204,6 +236,74 @@ mod tests {
             "--category",
             "invalid",
         ]);
+        assert!(result.is_err());
+    }
+
+    // 正常系: budget set --total がパースされること
+    #[test]
+    fn budget_set_total_parses_correctly() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "budget", "set", "--total", "150000"])?;
+        let Commands::Budget(budget_args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        let BudgetCommands::Set(args) = budget_args.command else {
+            anyhow::bail!("予期しないサブコマンドです");
+        };
+        assert_eq!(args.total, Some(150000));
+        assert!(args.category.is_none());
+        assert!(args.amount.is_none());
+        Ok(())
+    }
+
+    // 正常系: budget set --category がパースされること
+    #[test]
+    fn budget_set_category_parses_correctly() -> anyhow::Result<()> {
+        let cli =
+            Cli::try_parse_from(["kakeibo", "budget", "set", "--category", "food", "40000"])?;
+        let Commands::Budget(budget_args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        let BudgetCommands::Set(args) = budget_args.command else {
+            anyhow::bail!("予期しないサブコマンドです");
+        };
+        assert!(args.total.is_none());
+        assert_eq!(args.category, Some(Category::Food));
+        assert_eq!(args.amount, Some(40000));
+        Ok(())
+    }
+
+    // 正常系: budget show がパースされること
+    #[test]
+    fn budget_show_parses_correctly() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "budget", "show"])?;
+        let Commands::Budget(budget_args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(matches!(budget_args.command, BudgetCommands::Show));
+        Ok(())
+    }
+
+    // 異常系: --total と --category の同時指定はエラーになること
+    #[test]
+    fn budget_set_total_and_category_are_exclusive() {
+        let result = Cli::try_parse_from([
+            "kakeibo",
+            "budget",
+            "set",
+            "--total",
+            "150000",
+            "--category",
+            "food",
+            "40000",
+        ]);
+        assert!(result.is_err());
+    }
+
+    // 異常系: --category に金額なしはエラーになること
+    #[test]
+    fn budget_set_category_without_amount_is_error() {
+        let result =
+            Cli::try_parse_from(["kakeibo", "budget", "set", "--category", "food"]);
         assert!(result.is_err());
     }
 

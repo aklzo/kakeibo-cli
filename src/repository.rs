@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context};
 use rusqlite::{Connection, Row};
 
-use crate::model::{Category, Transaction};
+use crate::model::{Budget, Category, Transaction};
 
 /// 取引追加時に渡す入力データ。
 pub struct NewTransaction {
@@ -126,6 +126,69 @@ pub fn delete(conn: &Connection, id: i64) -> anyhow::Result<()> {
         return Err(anyhow!("ID={id} の取引が見つかりません"));
     }
     Ok(())
+}
+
+/// 予算設定時に渡す入力データ。`month` は常に NULL（全月共通）として登録する。
+pub struct NewBudget {
+    /// None = 月全体の予算、Some = カテゴリ別予算
+    pub category: Option<Category>,
+    /// 上限金額（円、正の整数）
+    pub amount: i64,
+}
+
+fn row_to_budget(row: &Row<'_>) -> anyhow::Result<Budget> {
+    let category_str: Option<String> = row.get(2)?;
+    let category = category_str
+        .map(|s| s.parse::<Category>().context("DBのカテゴリ値を解析できませんでした"))
+        .transpose()?;
+    Ok(Budget {
+        id: row.get(0)?,
+        month: row.get(1)?,
+        category,
+        amount: row.get(3)?,
+    })
+}
+
+fn find_budget_by_id(conn: &Connection, id: i64) -> anyhow::Result<Budget> {
+    let mut stmt = conn.prepare(
+        "SELECT id, month, category, amount FROM budgets WHERE id = ?1",
+    )?;
+    stmt.query_and_then(rusqlite::params![id], row_to_budget)?
+        .next()
+        .transpose()?
+        .ok_or_else(|| anyhow!("ID={id} の予算が見つかりません"))
+}
+
+/// 予算を設定する。同一条件の既存レコードがある場合は上書きする。
+pub fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Result<Budget> {
+    let category_str = new_budget.category.map(|c| c.to_string());
+    if new_budget.category.is_none() {
+        conn.execute(
+            "DELETE FROM budgets WHERE month IS NULL AND category IS NULL",
+            [],
+        )
+        .context("既存の月全体予算の削除に失敗しました")?;
+    } else {
+        conn.execute(
+            "DELETE FROM budgets WHERE month IS NULL AND category = ?1",
+            rusqlite::params![category_str],
+        )
+        .context("既存のカテゴリ予算の削除に失敗しました")?;
+    }
+    conn.execute(
+        "INSERT INTO budgets (month, category, amount) VALUES (NULL, ?1, ?2)",
+        rusqlite::params![category_str, new_budget.amount],
+    )
+    .context("予算の設定に失敗しました")?;
+    find_budget_by_id(conn, conn.last_insert_rowid())
+}
+
+/// 予算設定の一覧を返す。
+pub fn list_budgets(conn: &Connection) -> anyhow::Result<Vec<Budget>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, month, category, amount FROM budgets ORDER BY id ASC",
+    )?;
+    stmt.query_and_then([], row_to_budget)?.collect()
 }
 
 #[cfg(test)]
@@ -352,6 +415,63 @@ mod tests {
         let result = delete(&conn, 999);
 
         assert!(result.is_err());
+        Ok(())
+    }
+
+    // 正常系: 月全体の予算が正しく保存されること
+    #[test]
+    fn set_budget_stores_total_budget() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let budget = set_budget(&conn, &NewBudget { category: None, amount: 150000 })?;
+
+        assert!(budget.category.is_none());
+        assert!(budget.month.is_none());
+        assert_eq!(budget.amount, 150000);
+        Ok(())
+    }
+
+    // 正常系: カテゴリ別予算が正しく保存されること
+    #[test]
+    fn set_budget_stores_category_budget() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let budget = set_budget(
+            &conn,
+            &NewBudget { category: Some(Category::Food), amount: 40000 },
+        )?;
+
+        assert_eq!(budget.category, Some(Category::Food));
+        assert_eq!(budget.amount, 40000);
+        Ok(())
+    }
+
+    // 正常系: 同一条件で再設定すると上書きされること
+    #[test]
+    fn set_budget_overwrites_existing_record() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        set_budget(&conn, &NewBudget { category: None, amount: 100000 })?;
+
+        set_budget(&conn, &NewBudget { category: None, amount: 150000 })?;
+
+        let budgets = list_budgets(&conn)?;
+        // 上書きにより1件のみ残ること
+        assert_eq!(budgets.len(), 1);
+        assert_eq!(budgets[0].amount, 150000);
+        Ok(())
+    }
+
+    // 正常系: 複数の予算設定が全件返ること
+    #[test]
+    fn list_budgets_returns_all_records() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        set_budget(&conn, &NewBudget { category: None, amount: 150000 })?;
+        set_budget(&conn, &NewBudget { category: Some(Category::Food), amount: 40000 })?;
+        set_budget(&conn, &NewBudget { category: Some(Category::Transport), amount: 10000 })?;
+
+        let budgets = list_budgets(&conn)?;
+
+        assert_eq!(budgets.len(), 3);
         Ok(())
     }
 }

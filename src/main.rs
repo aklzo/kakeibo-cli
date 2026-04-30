@@ -9,7 +9,7 @@ use anyhow::Context;
 use clap::Parser;
 use rusqlite::Connection;
 
-use cli::{AddArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, SummaryArgs};
+use cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, SummaryArgs};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -20,6 +20,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Edit(args) => run_edit(&conn, args),
         Commands::Delete(args) => run_delete(&conn, args),
         Commands::Summary(args) => run_summary(&conn, args),
+        Commands::Budget(args) => run_budget(&conn, args),
     }
 }
 
@@ -115,6 +116,60 @@ fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
 fn run_delete(conn: &Connection, args: DeleteArgs) -> anyhow::Result<()> {
     repository::delete(conn, args.id)?;
     println!("取引を削除しました (ID: {})", args.id);
+    Ok(())
+}
+
+fn run_budget(conn: &Connection, args: BudgetArgs) -> anyhow::Result<()> {
+    match args.command {
+        BudgetCommands::Set(set_args) => run_budget_set(conn, set_args),
+        BudgetCommands::Show => run_budget_show(conn),
+    }
+}
+
+fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Result<()> {
+    let new_budget = if let Some(total) = args.total {
+        if total <= 0 {
+            anyhow::bail!("金額は正の整数で入力してください");
+        }
+        repository::NewBudget { category: None, amount: total }
+    } else if let Some(category) = args.category {
+        // clap の requires = "amount" により amount は必ず Some だが、念のため
+        let amount = args
+            .amount
+            .ok_or_else(|| anyhow::anyhow!("--category 指定時は金額を入力してください"))?;
+        if amount <= 0 {
+            anyhow::bail!("金額は正の整数で入力してください");
+        }
+        repository::NewBudget { category: Some(category), amount }
+    } else {
+        anyhow::bail!(
+            "月全体（--total）またはカテゴリ（--category）のいずれかを指定してください"
+        );
+    };
+    repository::set_budget(conn, &new_budget)?;
+    println!("予算を設定しました");
+    Ok(())
+}
+
+fn run_budget_show(conn: &Connection) -> anyhow::Result<()> {
+    let budgets = repository::list_budgets(conn)?;
+    if budgets.is_empty() {
+        println!("予算が設定されていません");
+        return Ok(());
+    }
+    println!("== 予算設定 ==");
+    println!();
+    for budget in &budgets {
+        let label = match budget.category {
+            None => "月全体".to_string(),
+            Some(c) => c.display_name().to_string(),
+        };
+        println!(
+            "{}{}",
+            pad_display(&label, 14),
+            right_align(&format_amount(budget.amount), 12),
+        );
+    }
     Ok(())
 }
 
@@ -303,7 +358,7 @@ fn format_amount(amount: i64) -> String {
 mod tests {
     use super::*;
     use crate::{
-        cli::{AddArgs, DeleteArgs, EditArgs, ListArgs, SummaryArgs},
+        cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, DeleteArgs, EditArgs, ListArgs, SummaryArgs},
         db,
         model::{Category, Transaction},
         repository,
@@ -663,5 +718,99 @@ mod tests {
         assert_eq!(format_signed_amount(80000), "+80,000円");
         assert_eq!(format_signed_amount(-20000), "-20,000円");
         assert_eq!(format_signed_amount(0), "+0円");
+    }
+
+    fn budget_set_args(total: Option<i64>, category: Option<Category>, amount: Option<i64>) -> BudgetArgs {
+        BudgetArgs {
+            command: BudgetCommands::Set(BudgetSetArgs { total, category, amount }),
+        }
+    }
+
+    // 正常系: budget set --total が予算を DB に登録すること
+    #[test]
+    fn run_budget_set_total_inserts_budget() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+
+        let budgets = repository::list_budgets(&conn)?;
+        assert_eq!(budgets.len(), 1);
+        assert!(budgets[0].category.is_none());
+        assert_eq!(budgets[0].amount, 150000);
+        Ok(())
+    }
+
+    // 正常系: budget set --category が予算を DB に登録すること
+    #[test]
+    fn run_budget_set_category_inserts_budget() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+
+        let budgets = repository::list_budgets(&conn)?;
+        assert_eq!(budgets.len(), 1);
+        assert_eq!(budgets[0].category, Some(Category::Food));
+        assert_eq!(budgets[0].amount, 40000);
+        Ok(())
+    }
+
+    // 正常系: 同一条件で再設定すると1件だけ残ること
+    #[test]
+    fn run_budget_set_overwrites_existing() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_budget(&conn, budget_set_args(Some(100000), None, None))?;
+
+        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+
+        let budgets = repository::list_budgets(&conn)?;
+        assert_eq!(budgets.len(), 1);
+        assert_eq!(budgets[0].amount, 150000);
+        Ok(())
+    }
+
+    // 異常系: 金額が 0 以下の場合はエラーになること
+    #[test]
+    fn run_budget_set_rejects_non_positive_amount() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_budget(&conn, budget_set_args(Some(0), None, None));
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: --total も --category も指定しない場合はエラーになること
+    #[test]
+    fn run_budget_set_without_flags_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_budget(&conn, budget_set_args(None, None, None));
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 正常系: 予算なしで budget show が Ok を返すこと
+    #[test]
+    fn run_budget_show_with_empty_table_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show });
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: 予算ありで budget show が Ok を返すこと
+    #[test]
+    fn run_budget_show_with_budgets_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+
+        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show });
+
+        assert!(result.is_ok());
+        Ok(())
     }
 }
