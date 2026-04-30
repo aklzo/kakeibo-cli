@@ -198,9 +198,10 @@ fn run_progress_for_month(
         },
     )?;
     let current_totals = build_category_totals(&current_txs);
-    let current_expense: i64 = EXPENSE_CATEGORIES
+    let current_expense: i64 = current_totals
         .iter()
-        .filter_map(|c| current_totals.get(c).copied())
+        .filter(|(c, _)| !c.is_income())
+        .map(|(_, &v)| v)
         .sum();
 
     if args.last_month {
@@ -282,7 +283,7 @@ fn print_budget_progress(
     if show_by_category {
         println!();
         println!("[ カテゴリ別 ]");
-        for category in EXPENSE_CATEGORIES {
+        for category in model::EXPENSE_CATEGORIES {
             let base = match category_budgets.get(category) {
                 Some(&b) => b,
                 None => continue,
@@ -321,9 +322,10 @@ fn print_last_month_progress(
     )?;
 
     let last_totals = build_category_totals(&last_txs);
-    let last_expense: i64 = EXPENSE_CATEGORIES
+    let last_expense: i64 = last_totals
         .iter()
-        .filter_map(|c| last_totals.get(c).copied())
+        .filter(|(c, _)| !c.is_income())
+        .map(|(_, &v)| v)
         .sum();
 
     println!(
@@ -366,7 +368,7 @@ fn print_last_month_progress(
     if show_by_category {
         println!();
         println!("[ カテゴリ別 ]");
-        for category in EXPENSE_CATEGORIES {
+        for category in model::EXPENSE_CATEGORIES {
             let base = last_totals.get(category).copied().unwrap_or(0);
             let current = current_totals.get(category).copied().unwrap_or(0);
             if base == 0 && current == 0 {
@@ -434,22 +436,6 @@ fn prev_month(month: &str) -> anyhow::Result<String> {
     }
 }
 
-/// 支出カテゴリの表示順序。
-const EXPENSE_CATEGORIES: &[model::Category] = &[
-    model::Category::Fixed,
-    model::Category::Subscription,
-    model::Category::Food,
-    model::Category::Daily,
-    model::Category::Transport,
-    model::Category::Clothing,
-    model::Category::Medical,
-    model::Category::Beauty,
-    model::Category::Social,
-    model::Category::Special,
-    model::Category::Learning,
-    model::Category::Hobby,
-    model::Category::Interior,
-];
 
 fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
     if let Some(ref m) = args.month {
@@ -503,13 +489,14 @@ fn print_monthly_summary(month: &str, totals: &HashMap<model::Category, i64>) {
         );
     }
 
-    let expense_total: i64 = EXPENSE_CATEGORIES
+    let expense_total: i64 = totals
         .iter()
-        .filter_map(|c| totals.get(c).copied())
+        .filter(|(c, _)| !c.is_income())
+        .map(|(_, &v)| v)
         .sum();
     println!();
     println!("支出");
-    for category in EXPENSE_CATEGORIES {
+    for category in model::EXPENSE_CATEGORIES {
         if let Some(&amount) = totals.get(category) {
             println!(
                 "  {}{}",
@@ -540,7 +527,7 @@ fn print_by_category_summary(month: &str, totals: &HashMap<model::Category, i64>
     println!();
 
     // 収入を先頭、支出を以降に表示する
-    let all_categories = [&[model::Category::Income] as &[_], EXPENSE_CATEGORIES].concat();
+    let all_categories = [&[model::Category::Income] as &[_], model::EXPENSE_CATEGORIES].concat();
 
     let rows: Vec<(&str, i64)> = all_categories
         .iter()

@@ -97,6 +97,24 @@ impl FromStr for Category {
     }
 }
 
+/// 支出カテゴリの正規一覧。並び順は仕様で定義された表示順を兼ねる。
+/// 合計計算では順序が不要なため、`is_income()` によるフィルタを使うこと。
+pub const EXPENSE_CATEGORIES: &[Category] = &[
+    Category::Fixed,
+    Category::Subscription,
+    Category::Food,
+    Category::Daily,
+    Category::Transport,
+    Category::Clothing,
+    Category::Medical,
+    Category::Beauty,
+    Category::Social,
+    Category::Special,
+    Category::Learning,
+    Category::Hobby,
+    Category::Interior,
+];
+
 /// DBから取得した取引レコード。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Transaction {
