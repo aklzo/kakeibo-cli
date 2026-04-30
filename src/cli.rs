@@ -20,6 +20,8 @@ pub enum Commands {
     Edit(EditArgs),
     /// 取引を削除する
     Delete(DeleteArgs),
+    /// 月次集計を表示する
+    Summary(SummaryArgs),
 }
 
 /// `add` サブコマンドの引数
@@ -78,6 +80,18 @@ pub struct EditArgs {
 pub struct DeleteArgs {
     /// 削除対象の取引 ID
     pub id: i64,
+}
+
+/// `summary` サブコマンドの引数
+#[derive(Args)]
+pub struct SummaryArgs {
+    /// 対象月（YYYY-MM）。省略時は当月
+    #[arg(long)]
+    pub month: Option<String>,
+
+    /// カテゴリ別集計モード
+    #[arg(long)]
+    pub by_category: bool,
 }
 
 /// `list` サブコマンドの引数
@@ -191,6 +205,60 @@ mod tests {
             "invalid",
         ]);
         assert!(result.is_err());
+    }
+
+    // 正常系: summary がオプションなしでパースされること
+    #[test]
+    fn summary_args_parses_without_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "summary"])?;
+        let Commands::Summary(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(args.month.is_none());
+        assert!(!args.by_category);
+        Ok(())
+    }
+
+    // 正常系: summary --month が正しくパースされること
+    #[test]
+    fn summary_args_parses_with_month() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "summary", "--month", "2025-04"])?;
+        let Commands::Summary(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.month.as_deref(), Some("2025-04"));
+        assert!(!args.by_category);
+        Ok(())
+    }
+
+    // 正常系: summary --by-category が正しくパースされること
+    #[test]
+    fn summary_args_parses_with_by_category() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "summary", "--by-category"])?;
+        let Commands::Summary(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(args.month.is_none());
+        assert!(args.by_category);
+        Ok(())
+    }
+
+    // 正常系: summary の全オプションが正しくパースされること
+    #[test]
+    fn summary_args_parses_all_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "kakeibo",
+            "summary",
+            "--by-category",
+            "--month",
+            "2025-04",
+        ])?;
+        let Commands::Summary(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.month.as_deref(), Some("2025-04"));
+        assert!(args.by_category);
+        Ok(())
     }
 
     // 正常系: edit の ID とオプションが正しくパースされること

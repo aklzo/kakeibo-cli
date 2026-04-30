@@ -1,3 +1,667 @@
-fn main() {
-    println!("Hello, world!");
+mod cli;
+mod db;
+mod model;
+mod repository;
+
+use std::collections::HashMap;
+
+use anyhow::Context;
+use clap::Parser;
+use rusqlite::Connection;
+
+use cli::{AddArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, SummaryArgs};
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    let conn = db::open()?;
+    match cli.command {
+        Commands::Add(args) => run_add(&conn, args),
+        Commands::List(args) => run_list(&conn, args),
+        Commands::Edit(args) => run_edit(&conn, args),
+        Commands::Delete(args) => run_delete(&conn, args),
+        Commands::Summary(args) => run_summary(&conn, args),
+    }
+}
+
+fn run_add(conn: &Connection, args: AddArgs) -> anyhow::Result<()> {
+    if args.amount <= 0 {
+        anyhow::bail!("金額は正の整数で入力してください");
+    }
+    let date = match args.date {
+        Some(d) => {
+            chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")
+                .context("日付は YYYY-MM-DD 形式で入力してください")?;
+            d
+        }
+        None => chrono::Local::now().format("%Y-%m-%d").to_string(),
+    };
+    let new_tx = repository::NewTransaction {
+        name: args.name,
+        amount: args.amount,
+        date,
+        category: args.category,
+        memo: args.memo,
+    };
+    let tx = repository::add(conn, &new_tx)?;
+    println!("取引を追加しました (ID: {})", tx.id);
+    Ok(())
+}
+
+fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
+    let month = args
+        .month
+        .or_else(|| Some(chrono::Local::now().format("%Y-%m").to_string()));
+    let filter = repository::TransactionFilter {
+        month,
+        category: args.category,
+    };
+    let transactions = repository::list(conn, &filter)?;
+    if transactions.is_empty() {
+        println!("取引がありません");
+        return Ok(());
+    }
+    println!(
+        "{:>4}  {:<10}  {:>12}  {:<8}  {}",
+        "ID", "日付", "金額", "カテゴリ", "名称"
+    );
+    println!("{}", "─".repeat(60));
+    for tx in &transactions {
+        println!(
+            "{:>4}  {:<10}  {:>12}  {:<8}  {}{}",
+            tx.id,
+            tx.date,
+            format_amount(tx.amount),
+            tx.category.display_name(),
+            tx.name,
+            tx.memo
+                .as_ref()
+                .map(|m| format!("  ({})", m))
+                .unwrap_or_default(),
+        );
+    }
+    Ok(())
+}
+
+fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
+    if args.name.is_none()
+        && args.amount.is_none()
+        && args.category.is_none()
+        && args.date.is_none()
+        && args.memo.is_none()
+    {
+        anyhow::bail!("更新するフィールドを少なくとも一つ指定してください");
+    }
+    if let Some(amount) = args.amount {
+        if amount <= 0 {
+            anyhow::bail!("金額は正の整数で入力してください");
+        }
+    }
+    if let Some(ref d) = args.date {
+        chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            .context("日付は YYYY-MM-DD 形式で入力してください")?;
+    }
+    let update = repository::TransactionUpdate {
+        name: args.name,
+        amount: args.amount,
+        date: args.date,
+        category: args.category,
+        memo: args.memo,
+    };
+    let tx = repository::edit(conn, args.id, &update)?;
+    println!("取引を更新しました (ID: {})", tx.id);
+    Ok(())
+}
+
+fn run_delete(conn: &Connection, args: DeleteArgs) -> anyhow::Result<()> {
+    repository::delete(conn, args.id)?;
+    println!("取引を削除しました (ID: {})", args.id);
+    Ok(())
+}
+
+/// 支出カテゴリの表示順序。
+const EXPENSE_CATEGORIES: &[model::Category] = &[
+    model::Category::Fixed,
+    model::Category::Subscription,
+    model::Category::Food,
+    model::Category::Daily,
+    model::Category::Transport,
+    model::Category::Clothing,
+    model::Category::Medical,
+    model::Category::Beauty,
+    model::Category::Social,
+    model::Category::Special,
+    model::Category::Learning,
+    model::Category::Hobby,
+    model::Category::Interior,
+];
+
+fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
+    let month = args
+        .month
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m").to_string());
+    let transactions = repository::list(
+        conn,
+        &repository::TransactionFilter {
+            month: Some(month.clone()),
+            category: None,
+        },
+    )?;
+    let totals = build_category_totals(&transactions);
+    if args.by_category {
+        print_by_category_summary(&month, &totals);
+    } else {
+        print_monthly_summary(&month, &totals);
+    }
+    Ok(())
+}
+
+/// 取引リストをカテゴリごとに合計した HashMap を返す。
+fn build_category_totals(
+    transactions: &[model::Transaction],
+) -> HashMap<model::Category, i64> {
+    let mut totals: HashMap<model::Category, i64> = HashMap::new();
+    for tx in transactions {
+        *totals.entry(tx.category).or_insert(0) += tx.amount;
+    }
+    totals
+}
+
+/// 月次集計を出力する。
+fn print_monthly_summary(month: &str, totals: &HashMap<model::Category, i64>) {
+    println!("== {} 集計 ==", format_month_display(month));
+
+    let income_total = totals
+        .get(&model::Category::Income)
+        .copied()
+        .unwrap_or(0);
+    println!();
+    println!("収入");
+    if income_total > 0 {
+        println!(
+            "  {}{}",
+            pad_display(model::Category::Income.display_name(), 14),
+            right_align(&format_amount(income_total), 12),
+        );
+    }
+
+    let expense_total: i64 = EXPENSE_CATEGORIES
+        .iter()
+        .filter_map(|c| totals.get(c).copied())
+        .sum();
+    println!();
+    println!("支出");
+    for category in EXPENSE_CATEGORIES {
+        if let Some(&amount) = totals.get(category) {
+            println!(
+                "  {}{}",
+                pad_display(category.display_name(), 14),
+                right_align(&format_amount(amount), 12),
+            );
+        }
+    }
+    println!("  {}", "─".repeat(26));
+    println!(
+        "  {}{}",
+        pad_display("合計", 14),
+        right_align(&format_amount(expense_total), 12),
+    );
+
+    let net = income_total - expense_total;
+    println!();
+    println!(
+        "{}{}",
+        pad_display("収支", 16),
+        right_align(&format_signed_amount(net), 12),
+    );
+}
+
+/// カテゴリ別集計を出力する。
+fn print_by_category_summary(month: &str, totals: &HashMap<model::Category, i64>) {
+    println!("== {} カテゴリ別集計 ==", format_month_display(month));
+    println!();
+
+    // 収入を先頭、支出を以降に表示する
+    let all_categories = [&[model::Category::Income] as &[_], EXPENSE_CATEGORIES].concat();
+
+    let rows: Vec<(&str, i64)> = all_categories
+        .iter()
+        .filter_map(|c| totals.get(c).map(|&a| (c.display_name(), a)))
+        .collect();
+
+    if rows.is_empty() {
+        println!("取引がありません");
+        return;
+    }
+
+    println!(
+        "{}{}",
+        pad_display("カテゴリ", 14),
+        right_align("金額", 12),
+    );
+    println!("{}", "─".repeat(26));
+    for (name, amount) in &rows {
+        println!(
+            "{}{}",
+            pad_display(name, 14),
+            right_align(&format_amount(*amount), 12),
+        );
+    }
+}
+
+/// "YYYY-MM" を "YYYY年MM月" に変換する。
+fn format_month_display(month: &str) -> String {
+    let mut parts = month.splitn(2, '-');
+    match (parts.next(), parts.next()) {
+        (Some(y), Some(m)) => format!("{y}年{m}月"),
+        _ => month.to_string(),
+    }
+}
+
+/// 金額に符号を付けてフォーマットする（例: 80000 → "+80,000円"）。
+fn format_signed_amount(amount: i64) -> String {
+    if amount >= 0 {
+        format!("+{}", format_amount(amount))
+    } else {
+        format!("-{}", format_amount(amount.abs()))
+    }
+}
+
+/// 文字列を指定した表示幅になるよう右側にスペースを埋める。非 ASCII 文字を幅 2 として計算する。
+fn pad_display(s: &str, width: usize) -> String {
+    let w: usize = s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - w))
+    }
+}
+
+/// 文字列を指定幅で右寄せする（幅が足りない場合は左にスペースを埋める）。
+fn right_align(s: &str, width: usize) -> String {
+    let w: usize = s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", " ".repeat(width - w), s)
+    }
+}
+
+/// 金額をカンマ区切りの円表記にフォーマットする（例: 1500 → "1,500円"）。
+fn format_amount(amount: i64) -> String {
+    let s = amount.to_string();
+    let mut reversed = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            reversed.push(',');
+        }
+        reversed.push(c);
+    }
+    format!("{}円", reversed.chars().rev().collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        cli::{AddArgs, DeleteArgs, EditArgs, ListArgs, SummaryArgs},
+        db,
+        model::{Category, Transaction},
+        repository,
+    };
+
+    fn setup_db() -> anyhow::Result<Connection> {
+        let conn = Connection::open_in_memory()?;
+        db::migrate(&conn)?;
+        Ok(conn)
+    }
+
+    fn default_add_args() -> AddArgs {
+        AddArgs {
+            name: "テスト購入".to_string(),
+            amount: 1000,
+            category: Category::Food,
+            date: Some("2025-04-15".to_string()),
+            memo: None,
+        }
+    }
+
+    // 正常系: add が取引を DB に挿入すること
+    #[test]
+    fn run_add_inserts_transaction_to_db() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        run_add(&conn, default_add_args())?;
+
+        let txs = repository::list(
+            &conn,
+            &repository::TransactionFilter {
+                month: None,
+                category: None,
+            },
+        )?;
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].name, "テスト購入");
+        assert_eq!(txs[0].amount, 1000);
+        Ok(())
+    }
+
+    // 異常系: 金額が 0 以下の場合はエラーになること
+    #[test]
+    fn run_add_rejects_non_positive_amount() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        let args = AddArgs {
+            amount: 0,
+            ..default_add_args()
+        };
+
+        let result = run_add(&conn, args);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: 不正な日付フォーマットはエラーになること
+    #[test]
+    fn run_add_rejects_invalid_date_format() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        let args = AddArgs {
+            date: Some("2025/04/15".to_string()),
+            ..default_add_args()
+        };
+
+        let result = run_add(&conn, args);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 正常系: 取引なしで list が Ok を返すこと
+    #[test]
+    fn run_list_with_empty_table_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_list(
+            &conn,
+            ListArgs {
+                month: Some("2025-04".to_string()),
+                category: None,
+            },
+        );
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: 取引ありで list が Ok を返すこと
+    #[test]
+    fn run_list_with_transactions_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+
+        let result = run_list(
+            &conn,
+            ListArgs {
+                month: Some("2025-04".to_string()),
+                category: None,
+            },
+        );
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: カンマ区切りのフォーマットが正しいこと
+    #[test]
+    fn format_amount_inserts_commas_correctly() {
+        assert_eq!(format_amount(500), "500円");
+        assert_eq!(format_amount(1500), "1,500円");
+        assert_eq!(format_amount(200000), "200,000円");
+    }
+
+    fn default_edit_args(id: i64) -> EditArgs {
+        EditArgs {
+            id,
+            name: None,
+            amount: Some(2000),
+            category: None,
+            date: None,
+            memo: None,
+        }
+    }
+
+    // 正常系: edit が指定フィールドを DB に反映すること
+    #[test]
+    fn run_edit_updates_specified_field() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+        let txs = repository::list(
+            &conn,
+            &repository::TransactionFilter {
+                month: None,
+                category: None,
+            },
+        )?;
+        let id = txs[0].id;
+
+        run_edit(&conn, default_edit_args(id))?;
+
+        let updated = repository::list(
+            &conn,
+            &repository::TransactionFilter {
+                month: None,
+                category: None,
+            },
+        )?;
+        assert_eq!(updated[0].amount, 2000);
+        Ok(())
+    }
+
+    // 異常系: 更新フィールドが一つも指定されていない場合はエラーになること
+    #[test]
+    fn run_edit_with_no_fields_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        let args = EditArgs {
+            id: 1,
+            name: None,
+            amount: None,
+            category: None,
+            date: None,
+            memo: None,
+        };
+
+        let result = run_edit(&conn, args);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: 金額が 0 以下の場合はエラーになること
+    #[test]
+    fn run_edit_rejects_non_positive_amount() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+        let args = EditArgs {
+            amount: Some(-1),
+            ..default_edit_args(1)
+        };
+
+        let result = run_edit(&conn, args);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: 不正な日付フォーマットはエラーになること
+    #[test]
+    fn run_edit_rejects_invalid_date_format() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+        let args = EditArgs {
+            amount: None,
+            date: Some("2025/04/15".to_string()),
+            ..default_edit_args(1)
+        };
+
+        let result = run_edit(&conn, args);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 異常系: 存在しない ID を編集するとエラーになること
+    #[test]
+    fn run_edit_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_edit(&conn, default_edit_args(999));
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    // 正常系: delete が取引を DB から削除すること
+    #[test]
+    fn run_delete_removes_transaction() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+        let txs = repository::list(
+            &conn,
+            &repository::TransactionFilter {
+                month: None,
+                category: None,
+            },
+        )?;
+        let id = txs[0].id;
+
+        run_delete(&conn, DeleteArgs { id })?;
+
+        let remaining = repository::list(
+            &conn,
+            &repository::TransactionFilter {
+                month: None,
+                category: None,
+            },
+        )?;
+        assert!(remaining.is_empty());
+        Ok(())
+    }
+
+    // 異常系: 存在しない ID を削除するとエラーになること
+    #[test]
+    fn run_delete_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_delete(&conn, DeleteArgs { id: 999 });
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    fn make_tx(id: i64, amount: i64, category: Category) -> Transaction {
+        Transaction {
+            id,
+            name: "テスト".to_string(),
+            amount,
+            date: "2025-04-01".to_string(),
+            category,
+            memo: None,
+            created_at: "2025-04-01 00:00:00".to_string(),
+        }
+    }
+
+    // 正常系: カテゴリ集計が正しく合算されること
+    #[test]
+    fn build_category_totals_aggregates_correctly() {
+        let transactions = vec![
+            make_tx(1, 1000, Category::Food),
+            make_tx(2, 500, Category::Food),
+            make_tx(3, 200000, Category::Income),
+            make_tx(4, 60000, Category::Fixed),
+        ];
+
+        let totals = build_category_totals(&transactions);
+
+        assert_eq!(totals.get(&Category::Food), Some(&1500));
+        assert_eq!(totals.get(&Category::Income), Some(&200000));
+        assert_eq!(totals.get(&Category::Fixed), Some(&60000));
+        assert_eq!(totals.get(&Category::Transport), None);
+    }
+
+    // 正常系: 取引なしで summary が Ok を返すこと
+    #[test]
+    fn run_summary_with_empty_table_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+
+        let result = run_summary(
+            &conn,
+            SummaryArgs {
+                month: Some("2025-04".to_string()),
+                by_category: false,
+            },
+        );
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: 取引ありで summary が Ok を返すこと
+    #[test]
+    fn run_summary_with_transactions_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+        run_add(
+            &conn,
+            AddArgs {
+                name: "給料".to_string(),
+                amount: 200000,
+                category: Category::Income,
+                date: Some("2025-04-25".to_string()),
+                memo: None,
+            },
+        )?;
+
+        let result = run_summary(
+            &conn,
+            SummaryArgs {
+                month: Some("2025-04".to_string()),
+                by_category: false,
+            },
+        );
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: --by-category で summary が Ok を返すこと
+    #[test]
+    fn run_summary_by_category_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(&conn, default_add_args())?;
+
+        let result = run_summary(
+            &conn,
+            SummaryArgs {
+                month: Some("2025-04".to_string()),
+                by_category: true,
+            },
+        );
+
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: format_month_display が正しく変換されること
+    #[test]
+    fn format_month_display_converts_correctly() {
+        assert_eq!(format_month_display("2025-04"), "2025年04月");
+        assert_eq!(format_month_display("2025-12"), "2025年12月");
+    }
+
+    // 正常系: format_signed_amount が符号付きで出力されること
+    #[test]
+    fn format_signed_amount_shows_sign() {
+        assert_eq!(format_signed_amount(80000), "+80,000円");
+        assert_eq!(format_signed_amount(-20000), "-20,000円");
+        assert_eq!(format_signed_amount(0), "+0円");
+    }
 }
