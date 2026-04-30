@@ -54,3 +54,10 @@ src/
 - 格納場所: `docs/spec.md`
 - 実装前に必ず参照すること
 - 仕様に不明点がある場合は実装を進めず確認すること
+
+## テスト方針
+- テストは同一ファイル末尾の `#[cfg(test)] mod tests` に記載すること
+- テスト関数名は `snake_case` で「何をテストするか」を表現すること
+  - 例: `add_transaction_with_empty_name_returns_error`
+- 正常系・異常系それぞれにコメントで補足を記載すること
+- テスト用DBは `Connection::open_in_memory()` を使用すること
