@@ -20,7 +20,7 @@ pub fn open() -> anyhow::Result<Connection> {
 }
 
 /// transactions・budgets テーブルを作成する（既存の場合はスキップ）。
-fn migrate(conn: &Connection) -> anyhow::Result<()> {
+pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS transactions (
