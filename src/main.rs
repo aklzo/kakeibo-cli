@@ -66,8 +66,8 @@ fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     println!(
-        "{:>4}  {:<10}  {:>12}  {:<8}  {}",
-        "ID", "日付", "金額", "カテゴリ", "名称"
+        "{:>4}  {:<10}  {:>12}  {:<8}  名称",
+        "ID", "日付", "金額", "カテゴリ"
     );
     println!("{}", "─".repeat(60));
     for tx in &transactions {
@@ -96,10 +96,10 @@ fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
     {
         anyhow::bail!("更新するフィールドを少なくとも一つ指定してください");
     }
-    if let Some(amount) = args.amount {
-        if amount <= 0 {
-            anyhow::bail!("金額は正の整数で入力してください");
-        }
+    if let Some(amount) = args.amount
+        && amount <= 0
+    {
+        anyhow::bail!("金額は正の整数で入力してください");
     }
     if let Some(ref d) = args.date {
         chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
@@ -256,28 +256,28 @@ fn print_budget_progress(
         format_month_display(current_month)
     );
 
-    if show_total {
-        if let Some(tb) = total_budget {
-            let pct = calc_percentage(current_expense, tb.amount);
-            println!();
-            println!("[ 月全体 ]");
-            println!(
-                "{}{}",
-                pad_display("予算上限", 10),
-                right_align(&format_amount(tb.amount), 12),
-            );
-            println!(
-                "{}{}",
-                pad_display("現在支出", 10),
-                right_align(&format_amount(current_expense), 12),
-            );
-            println!(
-                "{}{}  [{}]",
-                pad_display("進捗率", 10),
-                right_align(&format!("{:.1}%", pct), 8),
-                progress_bar(pct),
-            );
-        }
+    if show_total
+        && let Some(tb) = total_budget
+    {
+        let pct = calc_percentage(current_expense, tb.amount);
+        println!();
+        println!("[ 月全体 ]");
+        println!(
+            "{}{}",
+            pad_display("予算上限", 10),
+            right_align(&format_amount(tb.amount), 12),
+        );
+        println!(
+            "{}{}",
+            pad_display("現在支出", 10),
+            right_align(&format_amount(current_expense), 12),
+        );
+        println!(
+            "{}{}  [{}]",
+            pad_display("進捗率", 10),
+            right_align(&format!("{:.1}%", pct), 8),
+            progress_bar(pct),
+        );
     }
 
     if show_by_category {

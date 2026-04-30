@@ -5,21 +5,29 @@ use crate::model::{Budget, Category, Transaction};
 
 /// 取引追加時に渡す入力データ。
 pub struct NewTransaction {
+    /// 名称
     pub name: String,
     /// 金額（円、正の整数）
     pub amount: i64,
     /// 日付（YYYY-MM-DD）
     pub date: String,
+    /// カテゴリ
     pub category: Category,
+    /// メモ（任意）
     pub memo: Option<String>,
 }
 
 /// 取引編集時の更新データ。`Some` のフィールドのみ上書きする。
 pub struct TransactionUpdate {
+    /// 名称
     pub name: Option<String>,
+    /// 金額（円、正の整数）
     pub amount: Option<i64>,
+    /// 日付（YYYY-MM-DD）
     pub date: Option<String>,
+    /// カテゴリ
     pub category: Option<Category>,
+    /// メモ
     pub memo: Option<String>,
 }
 
@@ -27,6 +35,7 @@ pub struct TransactionUpdate {
 pub struct TransactionFilter {
     /// 対象月（YYYY-MM）
     pub month: Option<String>,
+    /// カテゴリ
     pub category: Option<Category>,
 }
 

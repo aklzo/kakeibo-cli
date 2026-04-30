@@ -120,12 +120,15 @@ pub const EXPENSE_CATEGORIES: &[Category] = &[
 pub struct Transaction {
     /// 自動採番ID（削除後は欠番）
     pub id: i64,
+    /// 名称
     pub name: String,
     /// 金額（円、正の整数）
     pub amount: i64,
     /// 日付（YYYY-MM-DD）
     pub date: String,
+    /// カテゴリ
     pub category: Category,
+    /// メモ（任意）
     pub memo: Option<String>,
     /// 登録日時（ISO 8601）
     pub created_at: String,
@@ -134,6 +137,7 @@ pub struct Transaction {
 /// DBから取得した予算レコード。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Budget {
+    /// 自動採番ID
     pub id: i64,
     /// 対象月（YYYY-MM）。NULL の場合は全月共通のデフォルト予算。
     pub month: Option<String>,
