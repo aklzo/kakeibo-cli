@@ -1,0 +1,12 @@
+# Rustビルド成果物
+/target
+
+# エディタ・OS固有ファイル
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 環境変数ファイル
+.env
