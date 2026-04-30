@@ -320,13 +320,6 @@ fn print_last_month_progress(
         },
     )?;
 
-    if last_txs.is_empty() {
-        anyhow::bail!(
-            "昨月（{}）の取引データがありません",
-            format_month_display(&last)
-        );
-    }
-
     let last_totals = build_category_totals(&last_txs);
     let last_expense: i64 = EXPENSE_CATEGORIES
         .iter()
@@ -339,25 +332,35 @@ fn print_last_month_progress(
     );
 
     if show_total {
-        let pct = calc_percentage(current_expense, last_expense);
         println!();
         println!("[ 月全体 ]");
-        println!(
-            "{}{}",
-            pad_display("昨月実績", 10),
-            right_align(&format_amount(last_expense), 12),
-        );
-        println!(
-            "{}{}",
-            pad_display("現在支出", 10),
-            right_align(&format_amount(current_expense), 12),
-        );
-        println!(
-            "{}{}  [{}]",
-            pad_display("進捗率", 10),
-            right_align(&format!("{:.1}%", pct), 8),
-            progress_bar(pct),
-        );
+        if last_expense > 0 {
+            let pct = calc_percentage(current_expense, last_expense);
+            println!(
+                "{}{}",
+                pad_display("昨月実績", 10),
+                right_align(&format_amount(last_expense), 12),
+            );
+            println!(
+                "{}{}",
+                pad_display("現在支出", 10),
+                right_align(&format_amount(current_expense), 12),
+            );
+            println!(
+                "{}{}  [{}]",
+                pad_display("進捗率", 10),
+                right_align(&format!("{:.1}%", pct), 8),
+                progress_bar(pct),
+            );
+        } else {
+            println!("{}（支出データなし）", pad_display("昨月実績", 10));
+            println!(
+                "{}{}",
+                pad_display("現在支出", 10),
+                right_align(&format_amount(current_expense), 12),
+            );
+            println!("{}N/A  [----------]", pad_display("進捗率", 10));
+        }
     }
 
     if show_by_category {
@@ -365,19 +368,27 @@ fn print_last_month_progress(
         println!("[ カテゴリ別 ]");
         for category in EXPENSE_CATEGORIES {
             let base = last_totals.get(category).copied().unwrap_or(0);
-            if base == 0 {
+            let current = current_totals.get(category).copied().unwrap_or(0);
+            if base == 0 && current == 0 {
                 continue;
             }
-            let current = current_totals.get(category).copied().unwrap_or(0);
-            let pct = calc_percentage(current, base);
-            println!(
-                "{}  {} / {}  {}  [{}]",
-                pad_display(category.display_name(), 12),
-                right_align(&format_amount_raw(current), 8),
-                right_align(&format_amount(base), 10),
-                right_align(&format!("{:.1}%", pct), 7),
-                progress_bar(pct),
-            );
+            if base == 0 {
+                println!(
+                    "{}  {} / （データなし）  N/A  [----------]",
+                    pad_display(category.display_name(), 12),
+                    right_align(&format_amount_raw(current), 8),
+                );
+            } else {
+                let pct = calc_percentage(current, base);
+                println!(
+                    "{}  {} / {}  {}  [{}]",
+                    pad_display(category.display_name(), 12),
+                    right_align(&format_amount_raw(current), 8),
+                    right_align(&format_amount(base), 10),
+                    right_align(&format!("{:.1}%", pct), 7),
+                    progress_bar(pct),
+                );
+            }
         }
     }
 
@@ -1208,15 +1219,37 @@ mod tests {
         Ok(())
     }
 
-    // 異常系: progress --last-month が昨月データなしでエラーになること
+    // 正常系: progress --last-month が昨月取引なしの場合 N/A を表示して Ok を返すこと
     #[test]
-    fn run_progress_last_month_without_data_returns_error() -> anyhow::Result<()> {
+    fn run_progress_last_month_without_data_shows_na() -> anyhow::Result<()> {
         let conn = setup_db()?;
 
         let args = ProgressArgs { total: false, by_category: false, last_month: true };
         let result = run_progress_for_month(&conn, &args, "2025-05");
 
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    // 正常系: progress --last-month が昨月収入のみの場合 N/A を表示して Ok を返すこと
+    #[test]
+    fn run_progress_last_month_income_only_shows_na() -> anyhow::Result<()> {
+        let conn = setup_db()?;
+        run_add(
+            &conn,
+            AddArgs {
+                name: "給料".to_string(),
+                amount: 200000,
+                category: Category::Income,
+                date: Some("2025-04-25".to_string()),
+                memo: None,
+            },
+        )?;
+
+        let args = ProgressArgs { total: false, by_category: false, last_month: true };
+        let result = run_progress_for_month(&conn, &args, "2025-05");
+
+        assert!(result.is_ok());
         Ok(())
     }
 
