@@ -1,0 +1,157 @@
+use clap::{Args, Parser, Subcommand};
+
+use crate::model::Category;
+
+/// CLI家計簿アプリ
+#[derive(Parser)]
+#[command(name = "kakeibo", about = "CLI家計簿アプリ")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// 取引を追加する
+    Add(AddArgs),
+    /// 取引の一覧を表示する
+    List(ListArgs),
+}
+
+/// `add` サブコマンドの引数
+#[derive(Args)]
+pub struct AddArgs {
+    /// 名称
+    #[arg(short = 'n', long)]
+    pub name: String,
+
+    /// 金額（円、正の整数）
+    #[arg(short = 'a', long)]
+    pub amount: i64,
+
+    /// カテゴリ識別子（例: food, fixed, income）
+    #[arg(short = 'c', long)]
+    pub category: Category,
+
+    /// 日付（YYYY-MM-DD）。省略時は実行日
+    #[arg(short = 'd', long)]
+    pub date: Option<String>,
+
+    /// メモ
+    #[arg(short = 'm', long)]
+    pub memo: Option<String>,
+}
+
+/// `list` サブコマンドの引数
+#[derive(Args)]
+pub struct ListArgs {
+    /// 対象月（YYYY-MM）。省略時は当月
+    #[arg(long)]
+    pub month: Option<String>,
+
+    /// カテゴリ絞り込み
+    #[arg(short = 'c', long)]
+    pub category: Option<Category>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Category;
+
+    // 正常系: add の必須引数が正しくパースされること
+    #[test]
+    fn add_args_parses_required_fields() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "kakeibo",
+            "add",
+            "--name",
+            "UberEats",
+            "--amount",
+            "1500",
+            "--category",
+            "food",
+        ])?;
+        let Commands::Add(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.name, "UberEats");
+        assert_eq!(args.amount, 1500);
+        assert_eq!(args.category, Category::Food);
+        assert!(args.date.is_none());
+        assert!(args.memo.is_none());
+        Ok(())
+    }
+
+    // 正常系: add のオプション引数が正しくパースされること
+    #[test]
+    fn add_args_parses_optional_fields() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "kakeibo",
+            "add",
+            "--name",
+            "UberEats",
+            "--amount",
+            "1500",
+            "--category",
+            "food",
+            "--date",
+            "2025-04-15",
+            "--memo",
+            "夕食",
+        ])?;
+        let Commands::Add(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.date.as_deref(), Some("2025-04-15"));
+        assert_eq!(args.memo.as_deref(), Some("夕食"));
+        Ok(())
+    }
+
+    // 正常系: list がオプションなしでパースされること
+    #[test]
+    fn list_args_parses_without_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["kakeibo", "list"])?;
+        let Commands::List(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert!(args.month.is_none());
+        assert!(args.category.is_none());
+        Ok(())
+    }
+
+    // 正常系: list の全オプションが正しくパースされること
+    #[test]
+    fn list_args_parses_all_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "kakeibo",
+            "list",
+            "--month",
+            "2025-04",
+            "--category",
+            "food",
+        ])?;
+        let Commands::List(args) = cli.command else {
+            anyhow::bail!("予期しないコマンドです");
+        };
+        assert_eq!(args.month.as_deref(), Some("2025-04"));
+        assert_eq!(args.category, Some(Category::Food));
+        Ok(())
+    }
+
+    // 異常系: 不正なカテゴリ文字列はパースエラーになること
+    #[test]
+    fn add_args_rejects_invalid_category() {
+        let result = Cli::try_parse_from([
+            "kakeibo",
+            "add",
+            "--name",
+            "test",
+            "--amount",
+            "1000",
+            "--category",
+            "invalid",
+        ]);
+        assert!(result.is_err());
+    }
+}
