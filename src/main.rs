@@ -66,22 +66,19 @@ fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     println!(
-        "{:>4}  {:<10}  {:>12}  {:<8}  名称",
+        "{:>4}  {:<10}  {:>12}  {:<8}  名称  メモ",
         "ID", "日付", "金額", "カテゴリ"
     );
     println!("{}", "─".repeat(60));
     for tx in &transactions {
         println!(
-            "{:>4}  {:<10}  {:>12}  {:<8}  {}{}",
+            "{:>4}  {:<10}  {:>12}  {:<8}  {}  {}",
             tx.id,
             tx.date,
             format_amount(tx.amount),
             tx.category.display_name(),
             tx.name,
-            tx.memo
-                .as_ref()
-                .map(|m| format!("  ({})", m))
-                .unwrap_or_default(),
+            tx.memo.as_deref().unwrap_or(""),
         );
     }
     Ok(())
