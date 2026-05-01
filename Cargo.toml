@@ -2,7 +2,7 @@
 name = "kakeibo-cli"
 version = "0.1.0"
 edition = "2024"
-authos = ["aklzo"]
+authors = ["aklzo"]
 description = "個人用CLI家計簿アプリ"
 
 [dependencies]
