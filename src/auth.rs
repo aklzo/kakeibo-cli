@@ -44,6 +44,9 @@ struct JwkKey {
 const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISSUER_SHORT: &str = "accounts.google.com";
 const GOOGLE_ISSUER_HTTPS: &str = "https://accounts.google.com";
+/// 開発用: `SKIP_AUTH=true` のとき認証を省略してこの user_id を返す。
+const SKIP_AUTH_ENV: &str = "SKIP_AUTH";
+const SKIP_AUTH_USER_ID: &str = "local";
 
 impl<S> FromRequestParts<S> for AuthUser
 where
@@ -52,6 +55,9 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        if std::env::var(SKIP_AUTH_ENV).as_deref() == Ok("true") {
+            return Ok(AuthUser { user_id: SKIP_AUTH_USER_ID.to_string() });
+        }
         let token = extract_bearer(parts)?;
         verify_token(&token)
             .await

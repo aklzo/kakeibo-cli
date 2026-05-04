@@ -23,7 +23,7 @@ pub async fn open() -> anyhow::Result<Connection> {
     Ok(conn)
 }
 
-/// transactions・budgets テーブルを作成する（既存の場合はスキップ）。
+/// transactions・budgets テーブルを作成し、既存テーブルへの user_id カラム追加も行う。
 pub(crate) async fn migrate(conn: &Connection) -> anyhow::Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS transactions (
@@ -52,5 +52,21 @@ pub(crate) async fn migrate(conn: &Connection) -> anyhow::Result<()> {
     )
     .await
     .context("budgetsテーブルの作成に失敗しました")?;
+
+    // user_id カラムが存在しない既存 DB への後付けマイグレーション。
+    // 既にカラムが存在する場合はエラーになるが無視する。
+    let _ = conn
+        .execute(
+            "ALTER TABLE transactions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'",
+            (),
+        )
+        .await;
+    let _ = conn
+        .execute(
+            "ALTER TABLE budgets ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'",
+            (),
+        )
+        .await;
+
     Ok(())
 }
