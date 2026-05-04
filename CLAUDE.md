@@ -61,3 +61,13 @@ src/
   - 例: `add_transaction_with_empty_name_returns_error`
 - 正常系・異常系それぞれにコメントで補足を記載すること
 - テスト用DBは `Connection::open_in_memory()` を使用すること
+
+## フェーズ2 参照ドキュメント
+- API 仕様: `docs/api-spec.md`
+- 技術選定背景: `docs/adr.md`
+
+## フェーズ2 追加制約
+- CLI と API でビジネスロジックを重複実装しないこと
+- API のエラーメッセージは英語で統一すること
+- 全エンドポイントで Google ID Token 認証を必須とすること
+
