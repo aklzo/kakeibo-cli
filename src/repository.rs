@@ -42,25 +42,27 @@ pub struct TransactionFilter {
 }
 
 fn row_to_transaction(row: &libsql::Row) -> anyhow::Result<Transaction> {
-    let category_str: String = row.get(4).context("category カラムの取得に失敗しました")?;
+    // SELECT id, user_id, name, amount, date, category, memo, created_at
+    let category_str: String = row.get(5).context("category カラムの取得に失敗しました")?;
     let category: Category = category_str
         .parse()
         .context("DBのカテゴリ値を解析できませんでした")?;
     Ok(Transaction {
         id: row.get(0).context("id カラムの取得に失敗しました")?,
-        name: row.get(1).context("name カラムの取得に失敗しました")?,
-        amount: row.get(2).context("amount カラムの取得に失敗しました")?,
-        date: row.get(3).context("date カラムの取得に失敗しました")?,
+        user_id: row.get(1).context("user_id カラムの取得に失敗しました")?,
+        name: row.get(2).context("name カラムの取得に失敗しました")?,
+        amount: row.get(3).context("amount カラムの取得に失敗しました")?,
+        date: row.get(4).context("date カラムの取得に失敗しました")?,
         category,
-        memo: row.get(5).context("memo カラムの取得に失敗しました")?,
-        created_at: row.get(6).context("created_at カラムの取得に失敗しました")?,
+        memo: row.get(6).context("memo カラムの取得に失敗しました")?,
+        created_at: row.get(7).context("created_at カラムの取得に失敗しました")?,
     })
 }
 
 async fn find_by_id(conn: &Connection, id: i64) -> anyhow::Result<Transaction> {
     let mut rows = conn
         .query(
-            "SELECT id, name, amount, date, category, memo, created_at
+            "SELECT id, user_id, name, amount, date, category, memo, created_at
              FROM transactions WHERE id = ?1",
             vec![Value::Integer(id)],
         )
@@ -110,7 +112,7 @@ pub async fn list(
     let cat_val = category_str.map(Value::Text).unwrap_or(Value::Null);
     let mut rows = conn
         .query(
-            "SELECT id, name, amount, date, category, memo, created_at
+            "SELECT id, user_id, name, amount, date, category, memo, created_at
              FROM transactions
              WHERE (?1 IS NULL OR strftime('%Y-%m', date) = ?1)
                AND (?2 IS NULL OR category = ?2)
@@ -188,23 +190,25 @@ pub struct NewBudget {
 }
 
 fn row_to_budget(row: &libsql::Row) -> anyhow::Result<Budget> {
+    // SELECT id, user_id, month, category, amount
     let category_str: Option<String> =
-        row.get(2).context("category カラムの取得に失敗しました")?;
+        row.get(3).context("category カラムの取得に失敗しました")?;
     let category = category_str
         .map(|s| s.parse::<Category>().context("DBのカテゴリ値を解析できませんでした"))
         .transpose()?;
     Ok(Budget {
         id: row.get(0).context("id カラムの取得に失敗しました")?,
-        month: row.get(1).context("month カラムの取得に失敗しました")?,
+        user_id: row.get(1).context("user_id カラムの取得に失敗しました")?,
+        month: row.get(2).context("month カラムの取得に失敗しました")?,
         category,
-        amount: row.get(3).context("amount カラムの取得に失敗しました")?,
+        amount: row.get(4).context("amount カラムの取得に失敗しました")?,
     })
 }
 
 async fn find_budget_by_id(conn: &Connection, id: i64) -> anyhow::Result<Budget> {
     let mut rows = conn
         .query(
-            "SELECT id, month, category, amount FROM budgets WHERE id = ?1",
+            "SELECT id, user_id, month, category, amount FROM budgets WHERE id = ?1",
             vec![Value::Integer(id)],
         )
         .await?;
@@ -254,7 +258,7 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
 pub async fn list_budgets(conn: &Connection) -> anyhow::Result<Vec<Budget>> {
     let mut rows = conn
         .query(
-            "SELECT id, month, category, amount FROM budgets ORDER BY id ASC",
+            "SELECT id, user_id, month, category, amount FROM budgets ORDER BY id ASC",
             (),
         )
         .await?;

@@ -120,6 +120,8 @@ pub const EXPENSE_CATEGORIES: &[Category] = &[
 pub struct Transaction {
     /// 自動採番ID（削除後は欠番）
     pub id: i64,
+    /// ユーザーID（Google ID Token の sub クレーム）
+    pub user_id: String,
     /// 名称
     pub name: String,
     /// 金額（円、正の整数）
@@ -139,6 +141,8 @@ pub struct Transaction {
 pub struct Budget {
     /// 自動採番ID
     pub id: i64,
+    /// ユーザーID（Google ID Token の sub クレーム）
+    pub user_id: String,
     /// 対象月（YYYY-MM）。NULL の場合は全月共通のデフォルト予算。
     pub month: Option<String>,
     /// 対象カテゴリ。NULL の場合は月全体の予算。

@@ -927,6 +927,7 @@ mod tests {
     fn make_tx(id: i64, amount: i64, category: Category) -> Transaction {
         Transaction {
             id,
+            user_id: "local".to_string(),
             name: "テスト".to_string(),
             amount,
             date: "2025-04-01".to_string(),
