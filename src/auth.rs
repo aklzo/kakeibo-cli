@@ -8,6 +8,11 @@ use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use serde_json::json;
 
+/// axum の State から Google Client ID を取得するためのトレイト。
+pub trait HasClientId {
+    fn client_id(&self) -> &str;
+}
+
 /// Google ID Token 検証後のユーザー情報。axum エクストラクタとして使用する。
 #[derive(Debug, Clone)]
 pub struct AuthUser {
@@ -44,22 +49,24 @@ struct JwkKey {
 const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISSUER_SHORT: &str = "accounts.google.com";
 const GOOGLE_ISSUER_HTTPS: &str = "https://accounts.google.com";
-/// 開発用: `SKIP_AUTH=true` のとき認証を省略してこの user_id を返す。
+
+/// 開発用: デバッグビルドかつ `SKIP_AUTH=true` のとき認証を省略する。
+#[cfg(debug_assertions)]
 const SKIP_AUTH_ENV: &str = "SKIP_AUTH";
-const SKIP_AUTH_USER_ID: &str = "local";
 
 impl<S> FromRequestParts<S> for AuthUser
 where
-    S: Send + Sync,
+    S: Send + Sync + HasClientId,
 {
     type Rejection = AuthError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        #[cfg(debug_assertions)]
         if std::env::var(SKIP_AUTH_ENV).as_deref() == Ok("true") {
-            return Ok(AuthUser { user_id: SKIP_AUTH_USER_ID.to_string() });
+            return Ok(AuthUser { user_id: "local".to_string() });
         }
         let token = extract_bearer(parts)?;
-        verify_token(&token)
+        verify_token(&token, state.client_id())
             .await
             .map(|user_id| AuthUser { user_id })
             .map_err(|_| AuthError(StatusCode::UNAUTHORIZED, "Unauthorized"))
@@ -78,9 +85,7 @@ fn extract_bearer(parts: &Parts) -> Result<String, AuthError> {
 }
 
 /// Google ID Token を検証し `sub` クレームを返す。
-///
-/// `GOOGLE_CLIENT_ID` 環境変数が設定されている場合は audience 検証も行う。
-async fn verify_token(token: &str) -> anyhow::Result<String> {
+async fn verify_token(token: &str, client_id: &str) -> anyhow::Result<String> {
     let header = decode_header(token)?;
     let kid = header
         .kid
@@ -101,10 +106,7 @@ async fn verify_token(token: &str) -> anyhow::Result<String> {
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&[GOOGLE_ISSUER_SHORT, GOOGLE_ISSUER_HTTPS]);
-    match std::env::var("GOOGLE_CLIENT_ID") {
-        Ok(client_id) => validation.set_audience(&[client_id]),
-        Err(_) => validation.validate_aud = false,
-    }
+    validation.set_audience(&[client_id]);
 
     let data = decode::<Claims>(token, &decoding_key, &validation)?;
     Ok(data.claims.sub)

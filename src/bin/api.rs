@@ -19,18 +19,35 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use auth::AuthUser;
+use anyhow::Context;
+use auth::{AuthUser, HasClientId};
 use model::{Category, EXPENSE_CATEGORIES};
 
 #[derive(Clone)]
 struct AppState {
     conn: libsql::Connection,
+    client_id: String,
+}
+
+impl HasClientId for AppState {
+    fn client_id(&self) -> &str {
+        &self.client_id
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let conn = db::open().await?;
-    let state = AppState { conn };
+
+    // リリースビルドでは GOOGLE_CLIENT_ID を必須とする。
+    // デバッグビルドでは未設定時は空文字（SKIP_AUTH=true で開発する想定）。
+    #[cfg(not(debug_assertions))]
+    let client_id = std::env::var("GOOGLE_CLIENT_ID")
+        .context("GOOGLE_CLIENT_ID 環境変数が設定されていません")?;
+    #[cfg(debug_assertions)]
+    let client_id = std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+
+    let state = AppState { conn, client_id };
 
     let app = Router::new()
         .route(
@@ -112,6 +129,10 @@ fn bad_request(msg: &'static str) -> Response {
 
 fn not_found(msg: &'static str) -> Response {
     (StatusCode::NOT_FOUND, Json(json!({"error": msg}))).into_response()
+}
+
+fn forbidden() -> Response {
+    (StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden"}))).into_response()
 }
 
 fn internal_server_error() -> Response {
@@ -285,11 +306,11 @@ async fn edit_transaction(
     };
     match repository::edit(&state.conn, id, &update, &user_id).await {
         Ok(tx) => Json(json!({"data": TransactionResponse::from(tx)})).into_response(),
-        Err(_) => not_found("Transaction not found"),
+        Err(_) => resolve_tx_error(&state.conn, id).await,
     }
 }
 
-// ─── DELETE /api/v1/transactions/:id ─────────────────────────────────────────
+// ─── DELETE /api/v1/transactions/{id} ────────────────────────────────────────
 
 async fn delete_transaction(
     State(state): State<AppState>,
@@ -298,7 +319,16 @@ async fn delete_transaction(
 ) -> Response {
     match repository::delete(&state.conn, id, &user_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(_) => not_found("Transaction not found"),
+        Err(_) => resolve_tx_error(&state.conn, id).await,
+    }
+}
+
+/// 取引が存在するなら 403、存在しないなら 404、DB エラーなら 500 を返す。
+async fn resolve_tx_error(conn: &libsql::Connection, id: i64) -> Response {
+    match repository::transaction_exists(conn, id).await {
+        Ok(true) => forbidden(),
+        Ok(false) => not_found("Transaction not found"),
+        Err(_) => internal_server_error(),
     }
 }
 

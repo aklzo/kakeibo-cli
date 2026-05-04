@@ -259,6 +259,17 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
     find_budget_by_id(conn, conn.last_insert_rowid(), &new_budget.user_id).await
 }
 
+/// 指定 ID の取引が（user_id に関わらず）存在するかを返す。403 / 404 の判定に使用する。
+pub async fn transaction_exists(conn: &Connection, id: i64) -> anyhow::Result<bool> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM transactions WHERE id = ?1",
+            vec![Value::Integer(id)],
+        )
+        .await?;
+    Ok(rows.next().await?.is_some())
+}
+
 /// 予算設定の一覧を返す。
 pub async fn list_budgets(conn: &Connection, user_id: &str) -> anyhow::Result<Vec<Budget>> {
     let mut rows = conn
