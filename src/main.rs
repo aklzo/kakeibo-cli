@@ -7,25 +7,28 @@ use std::collections::HashMap;
 
 use anyhow::Context;
 use clap::Parser;
-use rusqlite::Connection;
+use libsql::Connection;
 
 use cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, ProgressArgs, SummaryArgs};
 
-fn main() -> anyhow::Result<()> {
+const CLI_USER_ID: &str = "local";
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let conn = db::open()?;
+    let conn = db::open().await?;
     match cli.command {
-        Commands::Add(args) => run_add(&conn, args),
-        Commands::List(args) => run_list(&conn, args),
-        Commands::Edit(args) => run_edit(&conn, args),
-        Commands::Delete(args) => run_delete(&conn, args),
-        Commands::Summary(args) => run_summary(&conn, args),
-        Commands::Budget(args) => run_budget(&conn, args),
-        Commands::Progress(args) => run_progress(&conn, args),
+        Commands::Add(args) => run_add(&conn, args).await,
+        Commands::List(args) => run_list(&conn, args).await,
+        Commands::Edit(args) => run_edit(&conn, args).await,
+        Commands::Delete(args) => run_delete(&conn, args).await,
+        Commands::Summary(args) => run_summary(&conn, args).await,
+        Commands::Budget(args) => run_budget(&conn, args).await,
+        Commands::Progress(args) => run_progress(&conn, args).await,
     }
 }
 
-fn run_add(conn: &Connection, args: AddArgs) -> anyhow::Result<()> {
+async fn run_add(conn: &Connection, args: AddArgs) -> anyhow::Result<()> {
     if args.amount <= 0 {
         anyhow::bail!("金額は正の整数で入力してください");
     }
@@ -38,18 +41,19 @@ fn run_add(conn: &Connection, args: AddArgs) -> anyhow::Result<()> {
         None => chrono::Local::now().format("%Y-%m-%d").to_string(),
     };
     let new_tx = repository::NewTransaction {
+        user_id: CLI_USER_ID.to_string(),
         name: args.name,
         amount: args.amount,
         date,
         category: args.category,
         memo: args.memo,
     };
-    let tx = repository::add(conn, &new_tx)?;
+    let tx = repository::add(conn, &new_tx).await?;
     println!("取引を追加しました (ID: {})", tx.id);
     Ok(())
 }
 
-fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
+async fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
     if let Some(ref m) = args.month {
         validate_month_format(m)?;
     }
@@ -60,7 +64,7 @@ fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
         month,
         category: args.category,
     };
-    let transactions = repository::list(conn, &filter)?;
+    let transactions = repository::list(conn, &filter).await?;
     if transactions.is_empty() {
         println!("取引がありません");
         return Ok(());
@@ -84,7 +88,7 @@ fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
+async fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
     if args.name.is_none()
         && args.amount.is_none()
         && args.category.is_none()
@@ -109,30 +113,30 @@ fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
         category: args.category,
         memo: args.memo,
     };
-    let tx = repository::edit(conn, args.id, &update)?;
+    let tx = repository::edit(conn, args.id, &update).await?;
     println!("取引を更新しました (ID: {})", tx.id);
     Ok(())
 }
 
-fn run_delete(conn: &Connection, args: DeleteArgs) -> anyhow::Result<()> {
-    repository::delete(conn, args.id)?;
+async fn run_delete(conn: &Connection, args: DeleteArgs) -> anyhow::Result<()> {
+    repository::delete(conn, args.id).await?;
     println!("取引を削除しました (ID: {})", args.id);
     Ok(())
 }
 
-fn run_budget(conn: &Connection, args: BudgetArgs) -> anyhow::Result<()> {
+async fn run_budget(conn: &Connection, args: BudgetArgs) -> anyhow::Result<()> {
     match args.command {
-        BudgetCommands::Set(set_args) => run_budget_set(conn, set_args),
-        BudgetCommands::Show => run_budget_show(conn),
+        BudgetCommands::Set(set_args) => run_budget_set(conn, set_args).await,
+        BudgetCommands::Show => run_budget_show(conn).await,
     }
 }
 
-fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Result<()> {
+async fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Result<()> {
     let new_budget = if let Some(total) = args.total {
         if total <= 0 {
             anyhow::bail!("金額は正の整数で入力してください");
         }
-        repository::NewBudget { category: None, amount: total }
+        repository::NewBudget { user_id: CLI_USER_ID.to_string(), category: None, amount: total }
     } else if let Some(category) = args.category {
         // clap の requires = "amount" により amount は必ず Some だが、念のため
         let amount = args
@@ -141,19 +145,23 @@ fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Result<()> 
         if amount <= 0 {
             anyhow::bail!("金額は正の整数で入力してください");
         }
-        repository::NewBudget { category: Some(category), amount }
+        repository::NewBudget {
+            user_id: CLI_USER_ID.to_string(),
+            category: Some(category),
+            amount,
+        }
     } else {
         anyhow::bail!(
             "月全体（--total）またはカテゴリ（--category）のいずれかを指定してください"
         );
     };
-    repository::set_budget(conn, &new_budget)?;
+    repository::set_budget(conn, &new_budget).await?;
     println!("予算を設定しました");
     Ok(())
 }
 
-fn run_budget_show(conn: &Connection) -> anyhow::Result<()> {
-    let budgets = repository::list_budgets(conn)?;
+async fn run_budget_show(conn: &Connection) -> anyhow::Result<()> {
+    let budgets = repository::list_budgets(conn).await?;
     if budgets.is_empty() {
         println!("予算が設定されていません");
         return Ok(());
@@ -174,12 +182,12 @@ fn run_budget_show(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_progress(conn: &Connection, args: ProgressArgs) -> anyhow::Result<()> {
+async fn run_progress(conn: &Connection, args: ProgressArgs) -> anyhow::Result<()> {
     let current_month = chrono::Local::now().format("%Y-%m").to_string();
-    run_progress_for_month(conn, &args, &current_month)
+    run_progress_for_month(conn, &args, &current_month).await
 }
 
-fn run_progress_for_month(
+async fn run_progress_for_month(
     conn: &Connection,
     args: &ProgressArgs,
     current_month: &str,
@@ -193,7 +201,8 @@ fn run_progress_for_month(
             month: Some(current_month.to_string()),
             category: None,
         },
-    )?;
+    )
+    .await?;
     let current_totals = build_category_totals(&current_txs);
     let current_expense: i64 = current_totals
         .iter()
@@ -210,6 +219,7 @@ fn run_progress_for_month(
             show_total,
             show_by_category,
         )
+        .await
     } else {
         print_budget_progress(
             conn,
@@ -219,10 +229,11 @@ fn run_progress_for_month(
             show_total,
             show_by_category,
         )
+        .await
     }
 }
 
-fn print_budget_progress(
+async fn print_budget_progress(
     conn: &Connection,
     current_month: &str,
     current_totals: &HashMap<model::Category, i64>,
@@ -230,7 +241,7 @@ fn print_budget_progress(
     show_total: bool,
     show_by_category: bool,
 ) -> anyhow::Result<()> {
-    let budgets = repository::list_budgets(conn)?;
+    let budgets = repository::list_budgets(conn).await?;
     let total_budget = budgets.iter().find(|b| b.category.is_none());
     let category_budgets: HashMap<model::Category, i64> = budgets
         .iter()
@@ -301,7 +312,7 @@ fn print_budget_progress(
     Ok(())
 }
 
-fn print_last_month_progress(
+async fn print_last_month_progress(
     conn: &Connection,
     current_month: &str,
     current_totals: &HashMap<model::Category, i64>,
@@ -316,7 +327,8 @@ fn print_last_month_progress(
             month: Some(last.clone()),
             category: None,
         },
-    )?;
+    )
+    .await?;
 
     let last_totals = build_category_totals(&last_txs);
     let last_expense: i64 = last_totals
@@ -434,7 +446,7 @@ fn prev_month(month: &str) -> anyhow::Result<String> {
 }
 
 
-fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
+async fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
     if let Some(ref m) = args.month {
         validate_month_format(m)?;
     }
@@ -447,7 +459,8 @@ fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
             month: Some(month.clone()),
             category: None,
         },
-    )?;
+    )
+    .await?;
     let totals = build_category_totals(&transactions);
     if args.by_category {
         print_by_category_summary(&month, &totals);
@@ -619,9 +632,10 @@ mod tests {
         repository,
     };
 
-    fn setup_db() -> anyhow::Result<Connection> {
-        let conn = Connection::open_in_memory()?;
-        db::migrate(&conn)?;
+    async fn setup_db() -> anyhow::Result<Connection> {
+        let db = libsql::Builder::new_local(":memory:").build().await?;
+        let conn = db.connect()?;
+        db::migrate(&conn).await?;
         Ok(conn)
     }
 
@@ -636,11 +650,11 @@ mod tests {
     }
 
     // 正常系: add が取引を DB に挿入すること
-    #[test]
-    fn run_add_inserts_transaction_to_db() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_add_inserts_transaction_to_db() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        run_add(&conn, default_add_args())?;
+        run_add(&conn, default_add_args()).await?;
 
         let txs = repository::list(
             &conn,
@@ -648,7 +662,8 @@ mod tests {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].name, "テスト購入");
         assert_eq!(txs[0].amount, 1000);
@@ -656,39 +671,39 @@ mod tests {
     }
 
     // 異常系: 金額が 0 以下の場合はエラーになること
-    #[test]
-    fn run_add_rejects_non_positive_amount() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_add_rejects_non_positive_amount() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         let args = AddArgs {
             amount: 0,
             ..default_add_args()
         };
 
-        let result = run_add(&conn, args);
+        let result = run_add(&conn, args).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: 不正な日付フォーマットはエラーになること
-    #[test]
-    fn run_add_rejects_invalid_date_format() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_add_rejects_invalid_date_format() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         let args = AddArgs {
             date: Some("2025/04/15".to_string()),
             ..default_add_args()
         };
 
-        let result = run_add(&conn, args);
+        let result = run_add(&conn, args).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 正常系: 取引なしで list が Ok を返すこと
-    #[test]
-    fn run_list_with_empty_table_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_list_with_empty_table_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let result = run_list(
             &conn,
@@ -696,17 +711,18 @@ mod tests {
                 month: Some("2025-04".to_string()),
                 category: None,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: 取引ありで list が Ok を返すこと
-    #[test]
-    fn run_list_with_transactions_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_list_with_transactions_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
 
         let result = run_list(
             &conn,
@@ -714,16 +730,17 @@ mod tests {
                 month: Some("2025-04".to_string()),
                 category: None,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 異常系: list に不正な --month 書式を渡すとエラーになること
-    #[test]
-    fn run_list_rejects_invalid_month_format() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_list_rejects_invalid_month_format() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let result = run_list(
             &conn,
@@ -731,16 +748,17 @@ mod tests {
                 month: Some("2025/04".to_string()),
                 category: None,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: summary に不正な --month 書式を渡すとエラーになること
-    #[test]
-    fn run_summary_rejects_invalid_month_format() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_summary_rejects_invalid_month_format() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let result = run_summary(
             &conn,
@@ -748,7 +766,8 @@ mod tests {
                 month: Some("invalid".to_string()),
                 by_category: false,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         Ok(())
@@ -774,20 +793,21 @@ mod tests {
     }
 
     // 正常系: edit が指定フィールドを DB に反映すること
-    #[test]
-    fn run_edit_updates_specified_field() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_edit_updates_specified_field() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
         let txs = repository::list(
             &conn,
             &repository::TransactionFilter {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
         let id = txs[0].id;
 
-        run_edit(&conn, default_edit_args(id))?;
+        run_edit(&conn, default_edit_args(id)).await?;
 
         let updated = repository::list(
             &conn,
@@ -795,15 +815,16 @@ mod tests {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
         assert_eq!(updated[0].amount, 2000);
         Ok(())
     }
 
     // 異常系: 更新フィールドが一つも指定されていない場合はエラーになること
-    #[test]
-    fn run_edit_with_no_fields_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_edit_with_no_fields_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         let args = EditArgs {
             id: 1,
             name: None,
@@ -813,71 +834,72 @@ mod tests {
             memo: None,
         };
 
-        let result = run_edit(&conn, args);
+        let result = run_edit(&conn, args).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: 金額が 0 以下の場合はエラーになること
-    #[test]
-    fn run_edit_rejects_non_positive_amount() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_edit_rejects_non_positive_amount() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
         let args = EditArgs {
             amount: Some(-1),
             ..default_edit_args(1)
         };
 
-        let result = run_edit(&conn, args);
+        let result = run_edit(&conn, args).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: 不正な日付フォーマットはエラーになること
-    #[test]
-    fn run_edit_rejects_invalid_date_format() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_edit_rejects_invalid_date_format() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
         let args = EditArgs {
             amount: None,
             date: Some("2025/04/15".to_string()),
             ..default_edit_args(1)
         };
 
-        let result = run_edit(&conn, args);
+        let result = run_edit(&conn, args).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: 存在しない ID を編集するとエラーになること
-    #[test]
-    fn run_edit_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_edit_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let result = run_edit(&conn, default_edit_args(999));
+        let result = run_edit(&conn, default_edit_args(999)).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 正常系: delete が取引を DB から削除すること
-    #[test]
-    fn run_delete_removes_transaction() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_delete_removes_transaction() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
         let txs = repository::list(
             &conn,
             &repository::TransactionFilter {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
         let id = txs[0].id;
 
-        run_delete(&conn, DeleteArgs { id })?;
+        run_delete(&conn, DeleteArgs { id }).await?;
 
         let remaining = repository::list(
             &conn,
@@ -885,17 +907,18 @@ mod tests {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
         assert!(remaining.is_empty());
         Ok(())
     }
 
     // 異常系: 存在しない ID を削除するとエラーになること
-    #[test]
-    fn run_delete_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_delete_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let result = run_delete(&conn, DeleteArgs { id: 999 });
+        let result = run_delete(&conn, DeleteArgs { id: 999 }).await;
 
         assert!(result.is_err());
         Ok(())
@@ -932,9 +955,9 @@ mod tests {
     }
 
     // 正常系: 取引なしで summary が Ok を返すこと
-    #[test]
-    fn run_summary_with_empty_table_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_summary_with_empty_table_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let result = run_summary(
             &conn,
@@ -942,17 +965,18 @@ mod tests {
                 month: Some("2025-04".to_string()),
                 by_category: false,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: 取引ありで summary が Ok を返すこと
-    #[test]
-    fn run_summary_with_transactions_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_summary_with_transactions_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
         run_add(
             &conn,
             AddArgs {
@@ -962,7 +986,8 @@ mod tests {
                 date: Some("2025-04-25".to_string()),
                 memo: None,
             },
-        )?;
+        )
+        .await?;
 
         let result = run_summary(
             &conn,
@@ -970,17 +995,18 @@ mod tests {
                 month: Some("2025-04".to_string()),
                 by_category: false,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: --by-category で summary が Ok を返すこと
-    #[test]
-    fn run_summary_by_category_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_add(&conn, default_add_args())?;
+    #[tokio::test]
+    async fn run_summary_by_category_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_add(&conn, default_add_args()).await?;
 
         let result = run_summary(
             &conn,
@@ -988,7 +1014,8 @@ mod tests {
                 month: Some("2025-04".to_string()),
                 by_category: true,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
@@ -1016,13 +1043,13 @@ mod tests {
     }
 
     // 正常系: budget set --total が予算を DB に登録すること
-    #[test]
-    fn run_budget_set_total_inserts_budget() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_budget_set_total_inserts_budget() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
 
-        let budgets = repository::list_budgets(&conn)?;
+        let budgets = repository::list_budgets(&conn).await?;
         assert_eq!(budgets.len(), 1);
         assert!(budgets[0].category.is_none());
         assert_eq!(budgets[0].amount, 150000);
@@ -1030,13 +1057,13 @@ mod tests {
     }
 
     // 正常系: budget set --category が予算を DB に登録すること
-    #[test]
-    fn run_budget_set_category_inserts_budget() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_budget_set_category_inserts_budget() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
 
-        let budgets = repository::list_budgets(&conn)?;
+        let budgets = repository::list_budgets(&conn).await?;
         assert_eq!(budgets.len(), 1);
         assert_eq!(budgets[0].category, Some(Category::Food));
         assert_eq!(budgets[0].amount, 40000);
@@ -1044,60 +1071,60 @@ mod tests {
     }
 
     // 正常系: 同一条件で再設定すると1件だけ残ること
-    #[test]
-    fn run_budget_set_overwrites_existing() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_budget(&conn, budget_set_args(Some(100000), None, None))?;
+    #[tokio::test]
+    async fn run_budget_set_overwrites_existing() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_budget(&conn, budget_set_args(Some(100000), None, None)).await?;
 
-        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
 
-        let budgets = repository::list_budgets(&conn)?;
+        let budgets = repository::list_budgets(&conn).await?;
         assert_eq!(budgets.len(), 1);
         assert_eq!(budgets[0].amount, 150000);
         Ok(())
     }
 
     // 異常系: 金額が 0 以下の場合はエラーになること
-    #[test]
-    fn run_budget_set_rejects_non_positive_amount() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_budget_set_rejects_non_positive_amount() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let result = run_budget(&conn, budget_set_args(Some(0), None, None));
+        let result = run_budget(&conn, budget_set_args(Some(0), None, None)).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: --total も --category も指定しない場合はエラーになること
-    #[test]
-    fn run_budget_set_without_flags_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_budget_set_without_flags_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let result = run_budget(&conn, budget_set_args(None, None, None));
+        let result = run_budget(&conn, budget_set_args(None, None, None)).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 正常系: 予算なしで budget show が Ok を返すこと
-    #[test]
-    fn run_budget_show_with_empty_table_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_budget_show_with_empty_table_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show });
+        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show }).await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: 予算ありで budget show が Ok を返すこと
-    #[test]
-    fn run_budget_show_with_budgets_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+    #[tokio::test]
+    async fn run_budget_show_with_budgets_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
 
-        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show });
+        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show }).await;
 
         assert!(result.is_ok());
         Ok(())
@@ -1108,11 +1135,11 @@ mod tests {
     }
 
     // 正常系: progress（デフォルト）が予算設定済みで Ok を返すこと
-    #[test]
-    fn run_progress_default_mode_with_budgets_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+    #[tokio::test]
+    async fn run_progress_default_mode_with_budgets_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
         run_add(
             &conn,
             AddArgs {
@@ -1122,69 +1149,69 @@ mod tests {
                 date: Some("2025-04-01".to_string()),
                 memo: None,
             },
-        )?;
+        )
+        .await?;
 
-        let result = run_progress_for_month(&conn, &default_progress_args(), "2025-04");
+        let result = run_progress_for_month(&conn, &default_progress_args(), "2025-04").await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: progress --total が月全体予算設定済みで Ok を返すこと
-    #[test]
-    fn run_progress_total_only_with_budget_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_budget(&conn, budget_set_args(Some(150000), None, None))?;
+    #[tokio::test]
+    async fn run_progress_total_only_with_budget_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
 
         let args = ProgressArgs { total: true, by_category: false, last_month: false };
-        let result = run_progress_for_month(&conn, &args, "2025-04");
+        let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: progress --by-category がカテゴリ予算設定済みで Ok を返すこと
-    #[test]
-    fn run_progress_by_category_with_budget_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000)))?;
+    #[tokio::test]
+    async fn run_progress_by_category_with_budget_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
 
         let args = ProgressArgs { total: false, by_category: true, last_month: false };
-        let result = run_progress_for_month(&conn, &args, "2025-04");
+        let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 異常系: 月全体予算未設定で progress --total はエラーになること
-    #[test]
-    fn run_progress_total_without_budget_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_progress_total_without_budget_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let args = ProgressArgs { total: true, by_category: false, last_month: false };
-        let result = run_progress_for_month(&conn, &args, "2025-04");
+        let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 異常系: カテゴリ予算未設定で progress --by-category はエラーになること
-    #[test]
-    fn run_progress_by_category_without_budget_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_progress_by_category_without_budget_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let args = ProgressArgs { total: false, by_category: true, last_month: false };
-        let result = run_progress_for_month(&conn, &args, "2025-04");
+        let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 正常系: progress --last-month が昨月データありで Ok を返すこと
-    #[test]
-    fn run_progress_last_month_with_data_returns_ok() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        // 昨月（2025-04）のデータを追加
+    #[tokio::test]
+    async fn run_progress_last_month_with_data_returns_ok() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         run_add(
             &conn,
             AddArgs {
@@ -1194,31 +1221,32 @@ mod tests {
                 date: Some("2025-04-01".to_string()),
                 memo: None,
             },
-        )?;
+        )
+        .await?;
 
         let args = ProgressArgs { total: false, by_category: false, last_month: true };
-        let result = run_progress_for_month(&conn, &args, "2025-05");
+        let result = run_progress_for_month(&conn, &args, "2025-05").await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: progress --last-month が昨月取引なしの場合 N/A を表示して Ok を返すこと
-    #[test]
-    fn run_progress_last_month_without_data_shows_na() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_progress_last_month_without_data_shows_na() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let args = ProgressArgs { total: false, by_category: false, last_month: true };
-        let result = run_progress_for_month(&conn, &args, "2025-05");
+        let result = run_progress_for_month(&conn, &args, "2025-05").await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     // 正常系: progress --last-month が昨月収入のみの場合 N/A を表示して Ok を返すこと
-    #[test]
-    fn run_progress_last_month_income_only_shows_na() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn run_progress_last_month_income_only_shows_na() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         run_add(
             &conn,
             AddArgs {
@@ -1228,10 +1256,11 @@ mod tests {
                 date: Some("2025-04-25".to_string()),
                 memo: None,
             },
-        )?;
+        )
+        .await?;
 
         let args = ProgressArgs { total: false, by_category: false, last_month: true };
-        let result = run_progress_for_month(&conn, &args, "2025-05");
+        let result = run_progress_for_month(&conn, &args, "2025-05").await;
 
         assert!(result.is_ok());
         Ok(())

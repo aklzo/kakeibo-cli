@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Context};
-use rusqlite::{Connection, Row};
+use libsql::{Connection, Value};
 
 use crate::model::{Budget, Category, Transaction};
 
 /// 取引追加時に渡す入力データ。
 pub struct NewTransaction {
+    /// ユーザーID（CLI では "local"、API では Google ID Token の sub クレーム）
+    pub user_id: String,
     /// 名称
     pub name: String,
     /// 金額（円、正の整数）
@@ -39,71 +41,97 @@ pub struct TransactionFilter {
     pub category: Option<Category>,
 }
 
-fn row_to_transaction(row: &Row<'_>) -> anyhow::Result<Transaction> {
-    let category_str: String = row.get(4)?;
+fn row_to_transaction(row: &libsql::Row) -> anyhow::Result<Transaction> {
+    let category_str: String = row.get(4).context("category カラムの取得に失敗しました")?;
     let category: Category = category_str
         .parse()
         .context("DBのカテゴリ値を解析できませんでした")?;
     Ok(Transaction {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        amount: row.get(2)?,
-        date: row.get(3)?,
+        id: row.get(0).context("id カラムの取得に失敗しました")?,
+        name: row.get(1).context("name カラムの取得に失敗しました")?,
+        amount: row.get(2).context("amount カラムの取得に失敗しました")?,
+        date: row.get(3).context("date カラムの取得に失敗しました")?,
         category,
-        memo: row.get(5)?,
-        created_at: row.get(6)?,
+        memo: row.get(5).context("memo カラムの取得に失敗しました")?,
+        created_at: row.get(6).context("created_at カラムの取得に失敗しました")?,
     })
 }
 
-fn find_by_id(conn: &Connection, id: i64) -> anyhow::Result<Transaction> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, amount, date, category, memo, created_at
-         FROM transactions WHERE id = ?1",
-    )?;
-    stmt.query_and_then(rusqlite::params![id], row_to_transaction)?
-        .next()
-        .transpose()?
-        .ok_or_else(|| anyhow!("ID={id} の取引が見つかりません"))
+async fn find_by_id(conn: &Connection, id: i64) -> anyhow::Result<Transaction> {
+    let mut rows = conn
+        .query(
+            "SELECT id, name, amount, date, category, memo, created_at
+             FROM transactions WHERE id = ?1",
+            vec![Value::Integer(id)],
+        )
+        .await?;
+    match rows.next().await? {
+        Some(row) => row_to_transaction(&row),
+        None => Err(anyhow!("ID={id} の取引が見つかりません")),
+    }
 }
 
 /// 取引を追加し、追加後のレコードを返す。
-pub fn add(conn: &Connection, new_tx: &NewTransaction) -> anyhow::Result<Transaction> {
+pub async fn add(conn: &Connection, new_tx: &NewTransaction) -> anyhow::Result<Transaction> {
     let category_str = new_tx.category.to_string();
+    let memo_val = new_tx
+        .memo
+        .as_ref()
+        .map(|m| Value::Text(m.clone()))
+        .unwrap_or(Value::Null);
     conn.execute(
-        "INSERT INTO transactions (name, amount, date, category, memo, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', 'localtime'))",
-        rusqlite::params![
-            new_tx.name,
-            new_tx.amount,
-            new_tx.date,
-            category_str,
-            new_tx.memo,
+        "INSERT INTO transactions (user_id, name, amount, date, category, memo, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now', 'localtime'))",
+        vec![
+            Value::Text(new_tx.user_id.clone()),
+            Value::Text(new_tx.name.clone()),
+            Value::Integer(new_tx.amount),
+            Value::Text(new_tx.date.clone()),
+            Value::Text(category_str),
+            memo_val,
         ],
     )
+    .await
     .context("取引の追加に失敗しました")?;
-    find_by_id(conn, conn.last_insert_rowid())
+    find_by_id(conn, conn.last_insert_rowid()).await
 }
 
 /// 取引一覧を日付の降順で返す。
-pub fn list(conn: &Connection, filter: &TransactionFilter) -> anyhow::Result<Vec<Transaction>> {
+pub async fn list(
+    conn: &Connection,
+    filter: &TransactionFilter,
+) -> anyhow::Result<Vec<Transaction>> {
     let category_str = filter.category.map(|c| c.to_string());
-    let mut stmt = conn.prepare(
-        "SELECT id, name, amount, date, category, memo, created_at
-         FROM transactions
-         WHERE (?1 IS NULL OR strftime('%Y-%m', date) = ?1)
-           AND (?2 IS NULL OR category = ?2)
-         ORDER BY date DESC, id DESC",
-    )?;
-    stmt.query_and_then(
-        rusqlite::params![filter.month, category_str],
-        row_to_transaction,
-    )?
-    .collect()
+    let month_val = filter
+        .month
+        .as_ref()
+        .map(|m| Value::Text(m.clone()))
+        .unwrap_or(Value::Null);
+    let cat_val = category_str.map(Value::Text).unwrap_or(Value::Null);
+    let mut rows = conn
+        .query(
+            "SELECT id, name, amount, date, category, memo, created_at
+             FROM transactions
+             WHERE (?1 IS NULL OR strftime('%Y-%m', date) = ?1)
+               AND (?2 IS NULL OR category = ?2)
+             ORDER BY date DESC, id DESC",
+            vec![month_val, cat_val],
+        )
+        .await?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await? {
+        result.push(row_to_transaction(&row)?);
+    }
+    Ok(result)
 }
 
 /// 指定 ID の取引を更新し、更新後のレコードを返す。
-pub fn edit(conn: &Connection, id: i64, update: &TransactionUpdate) -> anyhow::Result<Transaction> {
-    let current = find_by_id(conn, id)?;
+pub async fn edit(
+    conn: &Connection,
+    id: i64,
+    update: &TransactionUpdate,
+) -> anyhow::Result<Transaction> {
+    let current = find_by_id(conn, id).await?;
 
     let name = update.name.as_deref().unwrap_or(&current.name);
     let amount = update.amount.unwrap_or(current.amount);
@@ -111,25 +139,37 @@ pub fn edit(conn: &Connection, id: i64, update: &TransactionUpdate) -> anyhow::R
     let category = update.category.unwrap_or(current.category);
     let category_str = category.to_string();
     let memo = update.memo.as_deref().or(current.memo.as_deref());
+    let memo_val = memo
+        .map(|m| Value::Text(m.to_string()))
+        .unwrap_or(Value::Null);
 
     conn.execute(
         "UPDATE transactions
          SET name = ?1, amount = ?2, date = ?3, category = ?4, memo = ?5
          WHERE id = ?6",
-        rusqlite::params![name, amount, date, category_str, memo, id],
+        vec![
+            Value::Text(name.to_string()),
+            Value::Integer(amount),
+            Value::Text(date.to_string()),
+            Value::Text(category_str),
+            memo_val,
+            Value::Integer(id),
+        ],
     )
+    .await
     .context("取引の更新に失敗しました")?;
 
-    find_by_id(conn, id)
+    find_by_id(conn, id).await
 }
 
 /// 指定 ID の取引を削除する。
-pub fn delete(conn: &Connection, id: i64) -> anyhow::Result<()> {
+pub async fn delete(conn: &Connection, id: i64) -> anyhow::Result<()> {
     let affected = conn
         .execute(
             "DELETE FROM transactions WHERE id = ?1",
-            rusqlite::params![id],
+            vec![Value::Integer(id)],
         )
+        .await
         .context("取引の削除に失敗しました")?;
     if affected == 0 {
         return Err(anyhow!("ID={id} の取引が見つかりません"));
@@ -139,65 +179,90 @@ pub fn delete(conn: &Connection, id: i64) -> anyhow::Result<()> {
 
 /// 予算設定時に渡す入力データ。`month` は常に NULL（全月共通）として登録する。
 pub struct NewBudget {
+    /// ユーザーID（CLI では "local"、API では Google ID Token の sub クレーム）
+    pub user_id: String,
     /// None = 月全体の予算、Some = カテゴリ別予算
     pub category: Option<Category>,
     /// 上限金額（円、正の整数）
     pub amount: i64,
 }
 
-fn row_to_budget(row: &Row<'_>) -> anyhow::Result<Budget> {
-    let category_str: Option<String> = row.get(2)?;
+fn row_to_budget(row: &libsql::Row) -> anyhow::Result<Budget> {
+    let category_str: Option<String> =
+        row.get(2).context("category カラムの取得に失敗しました")?;
     let category = category_str
         .map(|s| s.parse::<Category>().context("DBのカテゴリ値を解析できませんでした"))
         .transpose()?;
     Ok(Budget {
-        id: row.get(0)?,
-        month: row.get(1)?,
+        id: row.get(0).context("id カラムの取得に失敗しました")?,
+        month: row.get(1).context("month カラムの取得に失敗しました")?,
         category,
-        amount: row.get(3)?,
+        amount: row.get(3).context("amount カラムの取得に失敗しました")?,
     })
 }
 
-fn find_budget_by_id(conn: &Connection, id: i64) -> anyhow::Result<Budget> {
-    let mut stmt = conn.prepare(
-        "SELECT id, month, category, amount FROM budgets WHERE id = ?1",
-    )?;
-    stmt.query_and_then(rusqlite::params![id], row_to_budget)?
-        .next()
-        .transpose()?
-        .ok_or_else(|| anyhow!("ID={id} の予算が見つかりません"))
+async fn find_budget_by_id(conn: &Connection, id: i64) -> anyhow::Result<Budget> {
+    let mut rows = conn
+        .query(
+            "SELECT id, month, category, amount FROM budgets WHERE id = ?1",
+            vec![Value::Integer(id)],
+        )
+        .await?;
+    match rows.next().await? {
+        Some(row) => row_to_budget(&row),
+        None => Err(anyhow!("ID={id} の予算が見つかりません")),
+    }
 }
 
 /// 予算を設定する。同一条件の既存レコードがある場合は上書きする。
-pub fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Result<Budget> {
+pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Result<Budget> {
     let category_str = new_budget.category.map(|c| c.to_string());
     if new_budget.category.is_none() {
         conn.execute(
             "DELETE FROM budgets WHERE month IS NULL AND category IS NULL",
-            [],
+            (),
         )
+        .await
         .context("既存の月全体予算の削除に失敗しました")?;
     } else {
+        let cat_val = category_str
+            .as_ref()
+            .map(|s| Value::Text(s.clone()))
+            .unwrap_or(Value::Null);
         conn.execute(
             "DELETE FROM budgets WHERE month IS NULL AND category = ?1",
-            rusqlite::params![category_str],
+            vec![cat_val],
         )
+        .await
         .context("既存のカテゴリ予算の削除に失敗しました")?;
     }
+    let cat_val = category_str.map(Value::Text).unwrap_or(Value::Null);
     conn.execute(
-        "INSERT INTO budgets (month, category, amount) VALUES (NULL, ?1, ?2)",
-        rusqlite::params![category_str, new_budget.amount],
+        "INSERT INTO budgets (user_id, month, category, amount) VALUES (?1, NULL, ?2, ?3)",
+        vec![
+            Value::Text(new_budget.user_id.clone()),
+            cat_val,
+            Value::Integer(new_budget.amount),
+        ],
     )
+    .await
     .context("予算の設定に失敗しました")?;
-    find_budget_by_id(conn, conn.last_insert_rowid())
+    find_budget_by_id(conn, conn.last_insert_rowid()).await
 }
 
 /// 予算設定の一覧を返す。
-pub fn list_budgets(conn: &Connection) -> anyhow::Result<Vec<Budget>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, month, category, amount FROM budgets ORDER BY id ASC",
-    )?;
-    stmt.query_and_then([], row_to_budget)?.collect()
+pub async fn list_budgets(conn: &Connection) -> anyhow::Result<Vec<Budget>> {
+    let mut rows = conn
+        .query(
+            "SELECT id, month, category, amount FROM budgets ORDER BY id ASC",
+            (),
+        )
+        .await?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await? {
+        result.push(row_to_budget(&row)?);
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -205,14 +270,16 @@ mod tests {
     use super::*;
     use crate::db;
 
-    fn setup_db() -> anyhow::Result<Connection> {
-        let conn = Connection::open_in_memory()?;
-        db::migrate(&conn)?;
+    async fn setup_db() -> anyhow::Result<Connection> {
+        let db = libsql::Builder::new_local(":memory:").build().await?;
+        let conn = db.connect()?;
+        db::migrate(&conn).await?;
         Ok(conn)
     }
 
     fn default_new_transaction() -> NewTransaction {
         NewTransaction {
+            user_id: "local".to_string(),
             name: "テスト購入".to_string(),
             amount: 1500,
             date: "2025-04-15".to_string(),
@@ -222,10 +289,11 @@ mod tests {
     }
 
     // 正常系: 全フィールドが正しく保存・返却されること
-    #[test]
-    fn add_transaction_stores_all_fields() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn add_transaction_stores_all_fields() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         let new_tx = NewTransaction {
+            user_id: "local".to_string(),
             name: "UberEats".to_string(),
             amount: 1500,
             date: "2025-04-15".to_string(),
@@ -233,7 +301,7 @@ mod tests {
             memo: Some("夕食".to_string()),
         };
 
-        let tx = add(&conn, &new_tx)?;
+        let tx = add(&conn, &new_tx).await?;
 
         assert_eq!(tx.name, "UberEats");
         assert_eq!(tx.amount, 1500);
@@ -244,20 +312,20 @@ mod tests {
     }
 
     // 正常系: メモなしで追加した場合 None が返ること
-    #[test]
-    fn add_transaction_without_memo_stores_none() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn add_transaction_without_memo_stores_none() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let tx = add(&conn, &default_new_transaction())?;
+        let tx = add(&conn, &default_new_transaction()).await?;
 
         assert!(tx.memo.is_none());
         Ok(())
     }
 
     // 正常系: 月フィルタで指定月の取引のみ返ること
-    #[test]
-    fn list_transactions_filters_by_month() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn list_transactions_filters_by_month() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         add(
             &conn,
             &NewTransaction {
@@ -265,7 +333,8 @@ mod tests {
                 date: "2025-04-10".to_string(),
                 ..default_new_transaction()
             },
-        )?;
+        )
+        .await?;
         add(
             &conn,
             &NewTransaction {
@@ -273,7 +342,8 @@ mod tests {
                 date: "2025-05-01".to_string(),
                 ..default_new_transaction()
             },
-        )?;
+        )
+        .await?;
 
         let result = list(
             &conn,
@@ -281,7 +351,8 @@ mod tests {
                 month: Some("2025-04".to_string()),
                 category: None,
             },
-        )?;
+        )
+        .await?;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "4月購入");
@@ -289,9 +360,9 @@ mod tests {
     }
 
     // 正常系: カテゴリフィルタで指定カテゴリのみ返ること
-    #[test]
-    fn list_transactions_filters_by_category() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn list_transactions_filters_by_category() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         add(
             &conn,
             &NewTransaction {
@@ -299,7 +370,8 @@ mod tests {
                 category: Category::Food,
                 ..default_new_transaction()
             },
-        )?;
+        )
+        .await?;
         add(
             &conn,
             &NewTransaction {
@@ -307,7 +379,8 @@ mod tests {
                 category: Category::Transport,
                 ..default_new_transaction()
             },
-        )?;
+        )
+        .await?;
 
         let result = list(
             &conn,
@@ -315,7 +388,8 @@ mod tests {
                 month: None,
                 category: Some(Category::Food),
             },
-        )?;
+        )
+        .await?;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "食費");
@@ -323,11 +397,11 @@ mod tests {
     }
 
     // 正常系: フィルタなしで全件返ること
-    #[test]
-    fn list_transactions_with_no_filter_returns_all() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        add(&conn, &default_new_transaction())?;
-        add(&conn, &default_new_transaction())?;
+    #[tokio::test]
+    async fn list_transactions_with_no_filter_returns_all() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        add(&conn, &default_new_transaction()).await?;
+        add(&conn, &default_new_transaction()).await?;
 
         let result = list(
             &conn,
@@ -335,16 +409,17 @@ mod tests {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
 
         assert_eq!(result.len(), 2);
         Ok(())
     }
 
     // 正常系: 指定フィールドのみ更新され、他は変わらないこと
-    #[test]
-    fn edit_transaction_updates_only_specified_fields() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn edit_transaction_updates_only_specified_fields() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
         let tx = add(
             &conn,
             &NewTransaction {
@@ -352,7 +427,8 @@ mod tests {
                 amount: 1000,
                 ..default_new_transaction()
             },
-        )?;
+        )
+        .await?;
 
         let updated = edit(
             &conn,
@@ -364,7 +440,8 @@ mod tests {
                 category: None,
                 memo: Some("新しいメモ".to_string()),
             },
-        )?;
+        )
+        .await?;
 
         // 更新したフィールドが変わっていること
         assert_eq!(updated.amount, 2000);
@@ -377,9 +454,9 @@ mod tests {
     }
 
     // 異常系: 存在しない ID を編集するとエラーになること
-    #[test]
-    fn edit_transaction_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn edit_transaction_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let result = edit(
             &conn,
@@ -391,19 +468,20 @@ mod tests {
                 category: None,
                 memo: None,
             },
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 正常系: 削除後に取引が存在しないこと
-    #[test]
-    fn delete_transaction_removes_record() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        let tx = add(&conn, &default_new_transaction())?;
+    #[tokio::test]
+    async fn delete_transaction_removes_record() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        let tx = add(&conn, &default_new_transaction()).await?;
 
-        delete(&conn, tx.id)?;
+        delete(&conn, tx.id).await?;
 
         let remaining = list(
             &conn,
@@ -411,28 +489,33 @@ mod tests {
                 month: None,
                 category: None,
             },
-        )?;
+        )
+        .await?;
         assert!(remaining.is_empty());
         Ok(())
     }
 
     // 異常系: 存在しない ID を削除するとエラーになること
-    #[test]
-    fn delete_transaction_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn delete_transaction_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let result = delete(&conn, 999);
+        let result = delete(&conn, 999).await;
 
         assert!(result.is_err());
         Ok(())
     }
 
     // 正常系: 月全体の予算が正しく保存されること
-    #[test]
-    fn set_budget_stores_total_budget() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn set_budget_stores_total_budget() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
-        let budget = set_budget(&conn, &NewBudget { category: None, amount: 150000 })?;
+        let budget = set_budget(
+            &conn,
+            &NewBudget { user_id: "local".to_string(), category: None, amount: 150000 },
+        )
+        .await?;
 
         assert!(budget.category.is_none());
         assert!(budget.month.is_none());
@@ -441,14 +524,19 @@ mod tests {
     }
 
     // 正常系: カテゴリ別予算が正しく保存されること
-    #[test]
-    fn set_budget_stores_category_budget() -> anyhow::Result<()> {
-        let conn = setup_db()?;
+    #[tokio::test]
+    async fn set_budget_stores_category_budget() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
 
         let budget = set_budget(
             &conn,
-            &NewBudget { category: Some(Category::Food), amount: 40000 },
-        )?;
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: Some(Category::Food),
+                amount: 40000,
+            },
+        )
+        .await?;
 
         assert_eq!(budget.category, Some(Category::Food));
         assert_eq!(budget.amount, 40000);
@@ -456,14 +544,22 @@ mod tests {
     }
 
     // 正常系: 同一条件で再設定すると上書きされること
-    #[test]
-    fn set_budget_overwrites_existing_record() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        set_budget(&conn, &NewBudget { category: None, amount: 100000 })?;
+    #[tokio::test]
+    async fn set_budget_overwrites_existing_record() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        set_budget(
+            &conn,
+            &NewBudget { user_id: "local".to_string(), category: None, amount: 100000 },
+        )
+        .await?;
 
-        set_budget(&conn, &NewBudget { category: None, amount: 150000 })?;
+        set_budget(
+            &conn,
+            &NewBudget { user_id: "local".to_string(), category: None, amount: 150000 },
+        )
+        .await?;
 
-        let budgets = list_budgets(&conn)?;
+        let budgets = list_budgets(&conn).await?;
         // 上書きにより1件のみ残ること
         assert_eq!(budgets.len(), 1);
         assert_eq!(budgets[0].amount, 150000);
@@ -471,14 +567,34 @@ mod tests {
     }
 
     // 正常系: 複数の予算設定が全件返ること
-    #[test]
-    fn list_budgets_returns_all_records() -> anyhow::Result<()> {
-        let conn = setup_db()?;
-        set_budget(&conn, &NewBudget { category: None, amount: 150000 })?;
-        set_budget(&conn, &NewBudget { category: Some(Category::Food), amount: 40000 })?;
-        set_budget(&conn, &NewBudget { category: Some(Category::Transport), amount: 10000 })?;
+    #[tokio::test]
+    async fn list_budgets_returns_all_records() -> anyhow::Result<()> {
+        let conn = setup_db().await?;
+        set_budget(
+            &conn,
+            &NewBudget { user_id: "local".to_string(), category: None, amount: 150000 },
+        )
+        .await?;
+        set_budget(
+            &conn,
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: Some(Category::Food),
+                amount: 40000,
+            },
+        )
+        .await?;
+        set_budget(
+            &conn,
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: Some(Category::Transport),
+                amount: 10000,
+            },
+        )
+        .await?;
 
-        let budgets = list_budgets(&conn)?;
+        let budgets = list_budgets(&conn).await?;
 
         assert_eq!(budgets.len(), 3);
         Ok(())

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use rusqlite::Connection;
+use libsql::Connection;
 
 /// アプリデータディレクトリ（~/.kakeibo-cli/）を返す。存在しない場合は作成する。
 fn data_dir() -> anyhow::Result<PathBuf> {
@@ -12,33 +12,45 @@ fn data_dir() -> anyhow::Result<PathBuf> {
 }
 
 /// SQLite に接続してマイグレーションを実行し、接続を返す。
-pub fn open() -> anyhow::Result<Connection> {
+pub async fn open() -> anyhow::Result<Connection> {
     let path = data_dir()?.join("kakeibo.db");
-    let conn = Connection::open(&path).context("データベースへの接続に失敗しました")?;
-    migrate(&conn)?;
+    let db = libsql::Builder::new_local(&path)
+        .build()
+        .await
+        .context("データベースへの接続に失敗しました")?;
+    let conn = db.connect().context("データベース接続の取得に失敗しました")?;
+    migrate(&conn).await?;
     Ok(conn)
 }
 
 /// transactions・budgets テーブルを作成する（既存の場合はスキップ）。
-pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS transactions (
+pub(crate) async fn migrate(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS transactions (
             id         INTEGER PRIMARY KEY,
+            user_id    TEXT    NOT NULL,
             name       TEXT    NOT NULL,
             amount     INTEGER NOT NULL,
             date       TEXT    NOT NULL,
             category   TEXT    NOT NULL,
             memo       TEXT,
             created_at TEXT    NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS budgets (
+        )",
+        (),
+    )
+    .await
+    .context("transactionsテーブルの作成に失敗しました")?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS budgets (
             id       INTEGER PRIMARY KEY,
+            user_id  TEXT    NOT NULL,
             month    TEXT,
             category TEXT,
             amount   INTEGER NOT NULL
-        );
-        ",
+        )",
+        (),
     )
-    .context("マイグレーションに失敗しました")
+    .await
+    .context("budgetsテーブルの作成に失敗しました")?;
+    Ok(())
 }
