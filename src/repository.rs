@@ -35,6 +35,8 @@ pub struct TransactionUpdate {
 
 /// 取引一覧の絞り込み条件。`None` は絞り込みなし（全件）。
 pub struct TransactionFilter {
+    /// ユーザーID
+    pub user_id: String,
     /// 対象月（YYYY-MM）
     pub month: Option<String>,
     /// カテゴリ
@@ -59,12 +61,12 @@ fn row_to_transaction(row: &libsql::Row) -> anyhow::Result<Transaction> {
     })
 }
 
-async fn find_by_id(conn: &Connection, id: i64) -> anyhow::Result<Transaction> {
+async fn find_by_id(conn: &Connection, id: i64, user_id: &str) -> anyhow::Result<Transaction> {
     let mut rows = conn
         .query(
             "SELECT id, user_id, name, amount, date, category, memo, created_at
-             FROM transactions WHERE id = ?1",
-            vec![Value::Integer(id)],
+             FROM transactions WHERE id = ?1 AND user_id = ?2",
+            vec![Value::Integer(id), Value::Text(user_id.to_string())],
         )
         .await?;
     match rows.next().await? {
@@ -95,7 +97,7 @@ pub async fn add(conn: &Connection, new_tx: &NewTransaction) -> anyhow::Result<T
     )
     .await
     .context("取引の追加に失敗しました")?;
-    find_by_id(conn, conn.last_insert_rowid()).await
+    find_by_id(conn, conn.last_insert_rowid(), &new_tx.user_id).await
 }
 
 /// 取引一覧を日付の降順で返す。
@@ -114,10 +116,11 @@ pub async fn list(
         .query(
             "SELECT id, user_id, name, amount, date, category, memo, created_at
              FROM transactions
-             WHERE (?1 IS NULL OR strftime('%Y-%m', date) = ?1)
-               AND (?2 IS NULL OR category = ?2)
+             WHERE user_id = ?1
+               AND (?2 IS NULL OR strftime('%Y-%m', date) = ?2)
+               AND (?3 IS NULL OR category = ?3)
              ORDER BY date DESC, id DESC",
-            vec![month_val, cat_val],
+            vec![Value::Text(filter.user_id.clone()), month_val, cat_val],
         )
         .await?;
     let mut result = Vec::new();
@@ -132,8 +135,9 @@ pub async fn edit(
     conn: &Connection,
     id: i64,
     update: &TransactionUpdate,
+    user_id: &str,
 ) -> anyhow::Result<Transaction> {
-    let current = find_by_id(conn, id).await?;
+    let current = find_by_id(conn, id, user_id).await?;
 
     let name = update.name.as_deref().unwrap_or(&current.name);
     let amount = update.amount.unwrap_or(current.amount);
@@ -148,7 +152,7 @@ pub async fn edit(
     conn.execute(
         "UPDATE transactions
          SET name = ?1, amount = ?2, date = ?3, category = ?4, memo = ?5
-         WHERE id = ?6",
+         WHERE id = ?6 AND user_id = ?7",
         vec![
             Value::Text(name.to_string()),
             Value::Integer(amount),
@@ -156,20 +160,21 @@ pub async fn edit(
             Value::Text(category_str),
             memo_val,
             Value::Integer(id),
+            Value::Text(user_id.to_string()),
         ],
     )
     .await
     .context("取引の更新に失敗しました")?;
 
-    find_by_id(conn, id).await
+    find_by_id(conn, id, user_id).await
 }
 
 /// 指定 ID の取引を削除する。
-pub async fn delete(conn: &Connection, id: i64) -> anyhow::Result<()> {
+pub async fn delete(conn: &Connection, id: i64, user_id: &str) -> anyhow::Result<()> {
     let affected = conn
         .execute(
-            "DELETE FROM transactions WHERE id = ?1",
-            vec![Value::Integer(id)],
+            "DELETE FROM transactions WHERE id = ?1 AND user_id = ?2",
+            vec![Value::Integer(id), Value::Text(user_id.to_string())],
         )
         .await
         .context("取引の削除に失敗しました")?;
@@ -205,11 +210,11 @@ fn row_to_budget(row: &libsql::Row) -> anyhow::Result<Budget> {
     })
 }
 
-async fn find_budget_by_id(conn: &Connection, id: i64) -> anyhow::Result<Budget> {
+async fn find_budget_by_id(conn: &Connection, id: i64, user_id: &str) -> anyhow::Result<Budget> {
     let mut rows = conn
         .query(
-            "SELECT id, user_id, month, category, amount FROM budgets WHERE id = ?1",
-            vec![Value::Integer(id)],
+            "SELECT id, user_id, month, category, amount FROM budgets WHERE id = ?1 AND user_id = ?2",
+            vec![Value::Integer(id), Value::Text(user_id.to_string())],
         )
         .await?;
     match rows.next().await? {
@@ -223,8 +228,8 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
     let category_str = new_budget.category.map(|c| c.to_string());
     if new_budget.category.is_none() {
         conn.execute(
-            "DELETE FROM budgets WHERE month IS NULL AND category IS NULL",
-            (),
+            "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category IS NULL",
+            vec![Value::Text(new_budget.user_id.clone())],
         )
         .await
         .context("既存の月全体予算の削除に失敗しました")?;
@@ -234,8 +239,8 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
             .map(|s| Value::Text(s.clone()))
             .unwrap_or(Value::Null);
         conn.execute(
-            "DELETE FROM budgets WHERE month IS NULL AND category = ?1",
-            vec![cat_val],
+            "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category = ?2",
+            vec![Value::Text(new_budget.user_id.clone()), cat_val],
         )
         .await
         .context("既存のカテゴリ予算の削除に失敗しました")?;
@@ -251,15 +256,15 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
     )
     .await
     .context("予算の設定に失敗しました")?;
-    find_budget_by_id(conn, conn.last_insert_rowid()).await
+    find_budget_by_id(conn, conn.last_insert_rowid(), &new_budget.user_id).await
 }
 
 /// 予算設定の一覧を返す。
-pub async fn list_budgets(conn: &Connection) -> anyhow::Result<Vec<Budget>> {
+pub async fn list_budgets(conn: &Connection, user_id: &str) -> anyhow::Result<Vec<Budget>> {
     let mut rows = conn
         .query(
-            "SELECT id, user_id, month, category, amount FROM budgets ORDER BY id ASC",
-            (),
+            "SELECT id, user_id, month, category, amount FROM budgets WHERE user_id = ?1 ORDER BY id ASC",
+            vec![Value::Text(user_id.to_string())],
         )
         .await?;
     let mut result = Vec::new();
@@ -352,6 +357,7 @@ mod tests {
         let result = list(
             &conn,
             &TransactionFilter {
+                user_id: "local".to_string(),
                 month: Some("2025-04".to_string()),
                 category: None,
             },
@@ -389,6 +395,7 @@ mod tests {
         let result = list(
             &conn,
             &TransactionFilter {
+                user_id: "local".to_string(),
                 month: None,
                 category: Some(Category::Food),
             },
@@ -410,6 +417,7 @@ mod tests {
         let result = list(
             &conn,
             &TransactionFilter {
+                user_id: "local".to_string(),
                 month: None,
                 category: None,
             },
@@ -444,6 +452,7 @@ mod tests {
                 category: None,
                 memo: Some("新しいメモ".to_string()),
             },
+            "local",
         )
         .await?;
 
@@ -472,6 +481,7 @@ mod tests {
                 category: None,
                 memo: None,
             },
+            "local",
         )
         .await;
 
@@ -485,11 +495,12 @@ mod tests {
         let conn = setup_db().await?;
         let tx = add(&conn, &default_new_transaction()).await?;
 
-        delete(&conn, tx.id).await?;
+        delete(&conn, tx.id, "local").await?;
 
         let remaining = list(
             &conn,
             &TransactionFilter {
+                user_id: "local".to_string(),
                 month: None,
                 category: None,
             },
@@ -504,7 +515,7 @@ mod tests {
     async fn delete_transaction_with_nonexistent_id_returns_error() -> anyhow::Result<()> {
         let conn = setup_db().await?;
 
-        let result = delete(&conn, 999).await;
+        let result = delete(&conn, 999, "local").await;
 
         assert!(result.is_err());
         Ok(())
@@ -563,7 +574,7 @@ mod tests {
         )
         .await?;
 
-        let budgets = list_budgets(&conn).await?;
+        let budgets = list_budgets(&conn, "local").await?;
         // 上書きにより1件のみ残ること
         assert_eq!(budgets.len(), 1);
         assert_eq!(budgets[0].amount, 150000);
@@ -598,7 +609,7 @@ mod tests {
         )
         .await?;
 
-        let budgets = list_budgets(&conn).await?;
+        let budgets = list_budgets(&conn, "local").await?;
 
         assert_eq!(budgets.len(), 3);
         Ok(())

@@ -61,6 +61,7 @@ async fn run_list(conn: &Connection, args: ListArgs) -> anyhow::Result<()> {
         .month
         .or_else(|| Some(chrono::Local::now().format("%Y-%m").to_string()));
     let filter = repository::TransactionFilter {
+        user_id: CLI_USER_ID.to_string(),
         month,
         category: args.category,
     };
@@ -113,13 +114,13 @@ async fn run_edit(conn: &Connection, args: EditArgs) -> anyhow::Result<()> {
         category: args.category,
         memo: args.memo,
     };
-    let tx = repository::edit(conn, args.id, &update).await?;
+    let tx = repository::edit(conn, args.id, &update, CLI_USER_ID).await?;
     println!("取引を更新しました (ID: {})", tx.id);
     Ok(())
 }
 
 async fn run_delete(conn: &Connection, args: DeleteArgs) -> anyhow::Result<()> {
-    repository::delete(conn, args.id).await?;
+    repository::delete(conn, args.id, CLI_USER_ID).await?;
     println!("取引を削除しました (ID: {})", args.id);
     Ok(())
 }
@@ -161,7 +162,7 @@ async fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Resul
 }
 
 async fn run_budget_show(conn: &Connection) -> anyhow::Result<()> {
-    let budgets = repository::list_budgets(conn).await?;
+    let budgets = repository::list_budgets(conn, CLI_USER_ID).await?;
     if budgets.is_empty() {
         println!("予算が設定されていません");
         return Ok(());
@@ -198,6 +199,7 @@ async fn run_progress_for_month(
     let current_txs = repository::list(
         conn,
         &repository::TransactionFilter {
+            user_id: CLI_USER_ID.to_string(),
             month: Some(current_month.to_string()),
             category: None,
         },
@@ -241,7 +243,7 @@ async fn print_budget_progress(
     show_total: bool,
     show_by_category: bool,
 ) -> anyhow::Result<()> {
-    let budgets = repository::list_budgets(conn).await?;
+    let budgets = repository::list_budgets(conn, CLI_USER_ID).await?;
     let total_budget = budgets.iter().find(|b| b.category.is_none());
     let category_budgets: HashMap<model::Category, i64> = budgets
         .iter()
@@ -324,6 +326,7 @@ async fn print_last_month_progress(
     let last_txs = repository::list(
         conn,
         &repository::TransactionFilter {
+            user_id: CLI_USER_ID.to_string(),
             month: Some(last.clone()),
             category: None,
         },
@@ -456,6 +459,7 @@ async fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()>
     let transactions = repository::list(
         conn,
         &repository::TransactionFilter {
+            user_id: CLI_USER_ID.to_string(),
             month: Some(month.clone()),
             category: None,
         },
@@ -659,6 +663,7 @@ mod tests {
         let txs = repository::list(
             &conn,
             &repository::TransactionFilter {
+                user_id: CLI_USER_ID.to_string(),
                 month: None,
                 category: None,
             },
@@ -800,6 +805,7 @@ mod tests {
         let txs = repository::list(
             &conn,
             &repository::TransactionFilter {
+                user_id: CLI_USER_ID.to_string(),
                 month: None,
                 category: None,
             },
@@ -812,6 +818,7 @@ mod tests {
         let updated = repository::list(
             &conn,
             &repository::TransactionFilter {
+                user_id: CLI_USER_ID.to_string(),
                 month: None,
                 category: None,
             },
@@ -892,6 +899,7 @@ mod tests {
         let txs = repository::list(
             &conn,
             &repository::TransactionFilter {
+                user_id: CLI_USER_ID.to_string(),
                 month: None,
                 category: None,
             },
@@ -904,6 +912,7 @@ mod tests {
         let remaining = repository::list(
             &conn,
             &repository::TransactionFilter {
+                user_id: CLI_USER_ID.to_string(),
                 month: None,
                 category: None,
             },
@@ -1050,7 +1059,7 @@ mod tests {
 
         run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
 
-        let budgets = repository::list_budgets(&conn).await?;
+        let budgets = repository::list_budgets(&conn, CLI_USER_ID).await?;
         assert_eq!(budgets.len(), 1);
         assert!(budgets[0].category.is_none());
         assert_eq!(budgets[0].amount, 150000);
@@ -1064,7 +1073,7 @@ mod tests {
 
         run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
 
-        let budgets = repository::list_budgets(&conn).await?;
+        let budgets = repository::list_budgets(&conn, CLI_USER_ID).await?;
         assert_eq!(budgets.len(), 1);
         assert_eq!(budgets[0].category, Some(Category::Food));
         assert_eq!(budgets[0].amount, 40000);
@@ -1079,7 +1088,7 @@ mod tests {
 
         run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
 
-        let budgets = repository::list_budgets(&conn).await?;
+        let budgets = repository::list_budgets(&conn, CLI_USER_ID).await?;
         assert_eq!(budgets.len(), 1);
         assert_eq!(budgets[0].amount, 150000);
         Ok(())
