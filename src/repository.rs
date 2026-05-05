@@ -260,6 +260,7 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
 }
 
 /// 指定 ID の取引が（user_id に関わらず）存在するかを返す。403 / 404 の判定に使用する。
+#[allow(dead_code)]
 pub async fn transaction_exists(conn: &Connection, id: i64) -> anyhow::Result<bool> {
     let mut rows = conn
         .query(

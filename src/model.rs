@@ -26,6 +26,7 @@ pub enum Category {
 
 impl Category {
     /// 画面表示用の日本語名を返す。
+    #[allow(dead_code)]
     pub fn display_name(&self) -> &'static str {
         match self {
             Category::Fixed => "固定費",

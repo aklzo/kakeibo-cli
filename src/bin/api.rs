@@ -19,7 +19,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use anyhow::Context;
 use auth::{AuthUser, HasClientId};
 use model::{Category, EXPENSE_CATEGORIES};
 
@@ -244,10 +243,10 @@ async fn list_transactions(
     Query(query): Query<ListTransactionsQuery>,
 ) -> Response {
     let month = query.month.or_else(|| Some(current_month()));
-    if let Some(ref m) = month {
-        if !validate_month(m) {
-            return bad_request("Invalid request: month must be YYYY-MM");
-        }
+    if let Some(ref m) = month
+        && !validate_month(m)
+    {
+        return bad_request("Invalid request: month must be YYYY-MM");
     }
     let filter = repository::TransactionFilter {
         user_id,
@@ -287,15 +286,15 @@ async fn edit_transaction(
     Path(id): Path<i64>,
     Json(req): Json<EditTransactionRequest>,
 ) -> Response {
-    if let Some(amount) = req.amount {
-        if amount <= 0 {
-            return bad_request("Invalid request: amount must be a positive integer");
-        }
+    if let Some(amount) = req.amount
+        && amount <= 0
+    {
+        return bad_request("Invalid request: amount must be a positive integer");
     }
-    if let Some(ref date) = req.date {
-        if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
-            return bad_request("Invalid request: date must be YYYY-MM-DD");
-        }
+    if let Some(ref date) = req.date
+        && chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err()
+    {
+        return bad_request("Invalid request: date must be YYYY-MM-DD");
     }
     let update = repository::TransactionUpdate {
         name: req.name,
