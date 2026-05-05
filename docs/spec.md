@@ -184,6 +184,7 @@ kakeibo budget show                           # 現在の予算設定を表示
 | カラム | 型 | 備考 |
 |-------|-----|------|
 | id | INTEGER PRIMARY KEY | 自動採番、削除後は欠番 |
+| user_id | TEXT NOT NULL | Google アカウントの `sub` クレーム（CLI では `'local'`） |
 | name | TEXT NOT NULL | 名称 |
 | amount | INTEGER NOT NULL | 金額（円、正の整数） |
 | date | TEXT NOT NULL | ISO 8601形式 YYYY-MM-DD |
@@ -196,6 +197,7 @@ kakeibo budget show                           # 現在の予算設定を表示
 | カラム | 型 | 備考 |
 |-------|-----|------|
 | id | INTEGER PRIMARY KEY | 自動採番 |
+| user_id | TEXT NOT NULL | Google アカウントの `sub` クレーム（CLI では `'local'`） |
 | month | TEXT | YYYY-MM 形式。NULL の場合は全月共通のデフォルト予算 |
 | category | TEXT | NULL の場合は月全体の予算 |
 | amount | INTEGER NOT NULL | 上限金額（円） |
@@ -217,13 +219,13 @@ kakeibo budget show                           # 現在の予算設定を表示
 ## 5. フェーズ管理
 
 ### フェーズ1（初期実装）
-- [ ] 取引のCRUD（add / list / edit / delete）
-- [ ] 月次集計（summary）
-- [ ] カテゴリ別集計（summary --by-category）
-- [ ] 消費進捗率（progress）
-- [ ] 予算設定（budget）
+- [x] 取引のCRUD（add / list / edit / delete）
+- [x] 月次集計（summary）
+- [x] カテゴリ別集計（summary --by-category）
+- [x] 消費進捗率（progress）
+- [x] 予算設定（budget）
 
-### フェーズ2（将来課題）
+### 将来課題（CLI）
 - [ ] グラフ描画（`ratatui` による棒グラフ）
 - [ ] 期間指定集計
 - [ ] ローカルLLMによる支出分析

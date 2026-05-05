@@ -390,11 +390,11 @@ GET /api/v1/progress
 ## 8. フェーズ管理
 
 ### フェーズ2（API 実装）
-- [ ] axum による API サーバー実装
-- [ ] Google ID Token 認証ミドルウェア
-- [ ] Turso への DB 移行
-- [ ] Cloud Run へのデプロイ
-- [ ] GitHub Actions による自動デプロイ設定
+- [x] axum による API サーバー実装
+- [x] Google ID Token 認証ミドルウェア
+- [x] Turso への DB 移行
+- [x] Cloud Run へのデプロイ
+- [x] GitHub Actions による自動デプロイ設定
 
 ### フェーズ3（Android アプリ）
 - [ ] Kotlin + Jetpack Compose によるアプリ実装

@@ -4,8 +4,10 @@
 RustによるCLI家計簿アプリ。学習目的のため「基本に忠実・Rustらしい設計」を最優先とする。
 
 ## 技術スタック
-- **DB**: rusqlite（SQLite、`bundled` feature使用）
+- **DB**: libsql（Turso/SQLite 両対応。`DATABASE_URL` 未設定時はローカル SQLite、設定時は Turso に接続）
 - **CLIパーサー**: clap v4（`derive` feature使用）
+- **HTTPフレームワーク**: axum（API サーバー用）
+- **非同期ランタイム**: tokio
 - **シリアライズ**: serde + serde_json
 - **エラーハンドリング**: anyhow
 
