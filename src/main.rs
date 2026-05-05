@@ -142,6 +142,7 @@ async fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Resul
         }
         repository::NewBudget {
             user_id: CLI_USER_ID.to_string(),
+            month: None,
             category: None,
             amount: total,
         }
@@ -155,6 +156,7 @@ async fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Resul
         }
         repository::NewBudget {
             user_id: CLI_USER_ID.to_string(),
+            month: None,
             category: Some(category),
             amount,
         }

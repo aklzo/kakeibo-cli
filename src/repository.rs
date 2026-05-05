@@ -186,10 +186,12 @@ pub async fn delete(conn: &Connection, id: i64, user_id: &str) -> anyhow::Result
     Ok(())
 }
 
-/// 予算設定時に渡す入力データ。`month` は常に NULL（全月共通）として登録する。
+/// 予算設定時に渡す入力データ。
 pub struct NewBudget {
     /// ユーザーID（CLI では "local"、API では Google ID Token の sub クレーム）
     pub user_id: String,
+    /// None = 全月共通、Some(YYYY-MM) = 指定月のみ
+    pub month: Option<String>,
     /// None = 月全体の予算、Some = カテゴリ別予算
     pub category: Option<Category>,
     /// 上限金額（円、正の整数）
@@ -227,33 +229,62 @@ async fn find_budget_by_id(conn: &Connection, id: i64, user_id: &str) -> anyhow:
     }
 }
 
-/// 予算を設定する。同一条件の既存レコードがある場合は上書きする。
+/// 予算を設定する。同一の (month, category) 条件の既存レコードがある場合は上書きする。
 pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Result<Budget> {
     let category_str = new_budget.category.map(|c| c.to_string());
-    if new_budget.category.is_none() {
-        conn.execute(
-            "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category IS NULL",
-            vec![Value::Text(new_budget.user_id.clone())],
-        )
-        .await
-        .context("既存の月全体予算の削除に失敗しました")?;
-    } else {
-        let cat_val = category_str
-            .as_ref()
-            .map(|s| Value::Text(s.clone()))
-            .unwrap_or(Value::Null);
-        conn.execute(
-            "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category = ?2",
-            vec![Value::Text(new_budget.user_id.clone()), cat_val],
-        )
-        .await
-        .context("既存のカテゴリ予算の削除に失敗しました")?;
+
+    // (user_id, month, category) の組み合わせが同じ既存レコードを先に削除して上書きする。
+    // month / category が NULL の場合は IS NULL で比較する必要があるため match で場合分けする。
+    match (&new_budget.month, &category_str) {
+        (None, None) => {
+            conn.execute(
+                "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category IS NULL",
+                vec![Value::Text(new_budget.user_id.clone())],
+            )
+            .await
+            .context("既存の月全体予算の削除に失敗しました")?;
+        }
+        (None, Some(cat)) => {
+            conn.execute(
+                "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category = ?2",
+                vec![Value::Text(new_budget.user_id.clone()), Value::Text(cat.clone())],
+            )
+            .await
+            .context("既存のカテゴリ予算の削除に失敗しました")?;
+        }
+        (Some(month), None) => {
+            conn.execute(
+                "DELETE FROM budgets WHERE user_id = ?1 AND month = ?2 AND category IS NULL",
+                vec![Value::Text(new_budget.user_id.clone()), Value::Text(month.clone())],
+            )
+            .await
+            .context("既存の月別全体予算の削除に失敗しました")?;
+        }
+        (Some(month), Some(cat)) => {
+            conn.execute(
+                "DELETE FROM budgets WHERE user_id = ?1 AND month = ?2 AND category = ?3",
+                vec![
+                    Value::Text(new_budget.user_id.clone()),
+                    Value::Text(month.clone()),
+                    Value::Text(cat.clone()),
+                ],
+            )
+            .await
+            .context("既存の月別カテゴリ予算の削除に失敗しました")?;
+        }
     }
+
+    let month_val = new_budget
+        .month
+        .as_ref()
+        .map(|m| Value::Text(m.clone()))
+        .unwrap_or(Value::Null);
     let cat_val = category_str.map(Value::Text).unwrap_or(Value::Null);
     conn.execute(
-        "INSERT INTO budgets (user_id, month, category, amount) VALUES (?1, NULL, ?2, ?3)",
+        "INSERT INTO budgets (user_id, month, category, amount) VALUES (?1, ?2, ?3, ?4)",
         vec![
             Value::Text(new_budget.user_id.clone()),
+            month_val,
             cat_val,
             Value::Integer(new_budget.amount),
         ],
@@ -546,6 +577,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: None,
                 amount: 150000,
             },
@@ -567,6 +599,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: Some(Category::Food),
                 amount: 40000,
             },
@@ -586,6 +619,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: None,
                 amount: 100000,
             },
@@ -596,6 +630,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: None,
                 amount: 150000,
             },
@@ -617,6 +652,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: None,
                 amount: 150000,
             },
@@ -626,6 +662,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: Some(Category::Food),
                 amount: 40000,
             },
@@ -635,6 +672,7 @@ mod tests {
             &conn,
             &NewBudget {
                 user_id: "local".to_string(),
+                month: None,
                 category: Some(Category::Transport),
                 amount: 10000,
             },

@@ -157,7 +157,7 @@ POST /api/v1/transactions
     "date": "2025-05-01",
     "category": "food",
     "memo": "夕食",
-    "created_at": "2025-05-01T12:00:00Z"
+    "created_at": "2025-05-01 12:00:00"
   }
 }
 ```
@@ -192,7 +192,7 @@ GET /api/v1/transactions
         "date": "2025-05-01",
         "category": "food",
         "memo": "夕食",
-        "created_at": "2025-05-01T12:00:00Z"
+        "created_at": "2025-05-01 12:00:00"
       }
     ],
     "total": 1
@@ -228,7 +228,7 @@ PATCH /api/v1/transactions/:id
     "date": "2025-05-01",
     "category": "food",
     "memo": "新しいメモ",
-    "created_at": "2025-05-01T12:00:00Z"
+    "created_at": "2025-05-01 12:00:00"
   }
 }
 ```

@@ -415,11 +415,14 @@ async fn set_budget_handler(
     if req.amount <= 0 {
         return bad_request("Invalid request: amount must be a positive integer");
     }
-    if req.month.is_some() {
-        return bad_request("Invalid request: month-specific budgets are not yet supported");
+    if let Some(ref m) = req.month
+        && !validate_month(m)
+    {
+        return bad_request("Invalid request: month must be YYYY-MM");
     }
     let new_budget = repository::NewBudget {
         user_id,
+        month: req.month,
         category: req.category,
         amount: req.amount,
     };
