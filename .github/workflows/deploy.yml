@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+    # API バイナリ・コンテナイメージに影響するファイルが変更された場合のみデプロイする。
+    # docs/ note/ README.md などドキュメント変更では不要なデプロイを発生させない。
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/deploy.yml'
 
 # 同一ブランチへの連続 push 時は最新のみ実行する
 concurrency:
