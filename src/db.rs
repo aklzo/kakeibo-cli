@@ -11,13 +11,22 @@ fn data_dir() -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
-/// SQLite に接続してマイグレーションを実行し、接続を返す。
+/// DB に接続してマイグレーションを実行し、接続を返す。
+/// DATABASE_URL が設定されている場合は Turso（リモート）、未設定の場合はローカル SQLite に接続する。
 pub async fn open() -> anyhow::Result<Connection> {
-    let path = data_dir()?.join("kakeibo.db");
-    let db = libsql::Builder::new_local(&path)
-        .build()
-        .await
-        .context("データベースへの接続に失敗しました")?;
+    let db = if let Ok(url) = std::env::var("DATABASE_URL") {
+        let token = std::env::var("AUTH_TOKEN").unwrap_or_default();
+        libsql::Builder::new_remote(url, token)
+            .build()
+            .await
+            .context("Turso への接続に失敗しました")?
+    } else {
+        let path = data_dir()?.join("kakeibo.db");
+        libsql::Builder::new_local(&path)
+            .build()
+            .await
+            .context("データベースへの接続に失敗しました")?
+    };
     let conn = db
         .connect()
         .context("データベース接続の取得に失敗しました")?;
