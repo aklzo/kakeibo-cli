@@ -1,10 +1,10 @@
 use axum::{
-    extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::FromRequestParts,
+    http::{StatusCode, request::Parts},
+    response::{IntoResponse, Response},
 };
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -63,7 +63,9 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         #[cfg(debug_assertions)]
         if std::env::var(SKIP_AUTH_ENV).as_deref() == Ok("true") {
-            return Ok(AuthUser { user_id: "local".to_string() });
+            return Ok(AuthUser {
+                user_id: "local".to_string(),
+            });
         }
         let token = extract_bearer(parts)?;
         verify_token(&token, state.client_id())
@@ -91,10 +93,7 @@ async fn verify_token(token: &str, client_id: &str) -> anyhow::Result<String> {
         .kid
         .ok_or_else(|| anyhow::anyhow!("missing kid in token header"))?;
 
-    let jwks = reqwest::get(GOOGLE_JWKS_URL)
-        .await?
-        .json::<Jwks>()
-        .await?;
+    let jwks = reqwest::get(GOOGLE_JWKS_URL).await?.json::<Jwks>().await?;
 
     let key = jwks
         .keys

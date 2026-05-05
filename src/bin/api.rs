@@ -1,20 +1,20 @@
+#[path = "../auth.rs"]
+mod auth;
 #[path = "../db.rs"]
 mod db;
 #[path = "../model.rs"]
 mod model;
 #[path = "../repository.rs"]
 mod repository;
-#[path = "../auth.rs"]
-mod auth;
 
 use std::collections::HashMap;
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, patch, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -139,7 +139,7 @@ fn internal_server_error() -> Response {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({"error": "Internal server error"})),
     )
-    .into_response()
+        .into_response()
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -433,10 +433,7 @@ async fn set_budget_handler(
 
 // ─── GET /api/v1/budgets ──────────────────────────────────────────────────────
 
-async fn get_budgets(
-    State(state): State<AppState>,
-    AuthUser { user_id }: AuthUser,
-) -> Response {
+async fn get_budgets(State(state): State<AppState>, AuthUser { user_id }: AuthUser) -> Response {
     match repository::list_budgets(&state.conn, &user_id).await {
         Ok(budgets) => {
             let responses: Vec<BudgetResponse> =

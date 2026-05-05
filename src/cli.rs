@@ -276,8 +276,7 @@ mod tests {
     // 正常系: budget set --category がパースされること
     #[test]
     fn budget_set_category_parses_correctly() -> anyhow::Result<()> {
-        let cli =
-            Cli::try_parse_from(["kakeibo", "budget", "set", "--category", "food", "40000"])?;
+        let cli = Cli::try_parse_from(["kakeibo", "budget", "set", "--category", "food", "40000"])?;
         let Commands::Budget(budget_args) = cli.command else {
             anyhow::bail!("予期しないコマンドです");
         };
@@ -320,8 +319,7 @@ mod tests {
     // 異常系: --category に金額なしはエラーになること
     #[test]
     fn budget_set_category_without_amount_is_error() {
-        let result =
-            Cli::try_parse_from(["kakeibo", "budget", "set", "--category", "food"]);
+        let result = Cli::try_parse_from(["kakeibo", "budget", "set", "--category", "food"]);
         assert!(result.is_err());
     }
 
@@ -364,13 +362,8 @@ mod tests {
     // 正常系: summary の全オプションが正しくパースされること
     #[test]
     fn summary_args_parses_all_options() -> anyhow::Result<()> {
-        let cli = Cli::try_parse_from([
-            "kakeibo",
-            "summary",
-            "--by-category",
-            "--month",
-            "2025-04",
-        ])?;
+        let cli =
+            Cli::try_parse_from(["kakeibo", "summary", "--by-category", "--month", "2025-04"])?;
         let Commands::Summary(args) = cli.command else {
             anyhow::bail!("予期しないコマンドです");
         };
@@ -383,7 +376,13 @@ mod tests {
     #[test]
     fn edit_args_parses_id_and_options() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from([
-            "kakeibo", "edit", "3", "--amount", "2000", "--memo", "新しいメモ",
+            "kakeibo",
+            "edit",
+            "3",
+            "--amount",
+            "2000",
+            "--memo",
+            "新しいメモ",
         ])?;
         let Commands::Edit(args) = cli.command else {
             anyhow::bail!("予期しないコマンドです");
@@ -489,8 +488,7 @@ mod tests {
     // 異常系: --total と --by-category の同時指定はエラーになること
     #[test]
     fn progress_args_total_and_by_category_are_exclusive() {
-        let result =
-            Cli::try_parse_from(["kakeibo", "progress", "--total", "--by-category"]);
+        let result = Cli::try_parse_from(["kakeibo", "progress", "--total", "--by-category"]);
         assert!(result.is_err());
     }
 }

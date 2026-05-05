@@ -9,7 +9,10 @@ use anyhow::Context;
 use clap::Parser;
 use libsql::Connection;
 
-use cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, Cli, Commands, DeleteArgs, EditArgs, ListArgs, ProgressArgs, SummaryArgs};
+use cli::{
+    AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, Cli, Commands, DeleteArgs, EditArgs,
+    ListArgs, ProgressArgs, SummaryArgs,
+};
 
 const CLI_USER_ID: &str = "local";
 
@@ -137,7 +140,11 @@ async fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Resul
         if total <= 0 {
             anyhow::bail!("金額は正の整数で入力してください");
         }
-        repository::NewBudget { user_id: CLI_USER_ID.to_string(), category: None, amount: total }
+        repository::NewBudget {
+            user_id: CLI_USER_ID.to_string(),
+            category: None,
+            amount: total,
+        }
     } else if let Some(category) = args.category {
         // clap の requires = "amount" により amount は必ず Some だが、念のため
         let amount = args
@@ -152,9 +159,7 @@ async fn run_budget_set(conn: &Connection, args: BudgetSetArgs) -> anyhow::Resul
             amount,
         }
     } else {
-        anyhow::bail!(
-            "月全体（--total）またはカテゴリ（--category）のいずれかを指定してください"
-        );
+        anyhow::bail!("月全体（--total）またはカテゴリ（--category）のいずれかを指定してください");
     };
     repository::set_budget(conn, &new_budget).await?;
     println!("予算を設定しました");
@@ -266,9 +271,7 @@ async fn print_budget_progress(
         format_month_display(current_month)
     );
 
-    if show_total
-        && let Some(tb) = total_budget
-    {
+    if show_total && let Some(tb) = total_budget {
         let pct = calc_percentage(current_expense, tb.amount);
         println!();
         println!("[ 月全体 ]");
@@ -448,7 +451,6 @@ fn prev_month(month: &str) -> anyhow::Result<String> {
     }
 }
 
-
 async fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()> {
     if let Some(ref m) = args.month {
         validate_month_format(m)?;
@@ -475,9 +477,7 @@ async fn run_summary(conn: &Connection, args: SummaryArgs) -> anyhow::Result<()>
 }
 
 /// 取引リストをカテゴリごとに合計した HashMap を返す。
-fn build_category_totals(
-    transactions: &[model::Transaction],
-) -> HashMap<model::Category, i64> {
+fn build_category_totals(transactions: &[model::Transaction]) -> HashMap<model::Category, i64> {
     let mut totals: HashMap<model::Category, i64> = HashMap::new();
     for tx in transactions {
         *totals.entry(tx.category).or_insert(0) += tx.amount;
@@ -489,10 +489,7 @@ fn build_category_totals(
 fn print_monthly_summary(month: &str, totals: &HashMap<model::Category, i64>) {
     println!("== {} 集計 ==", format_month_display(month));
 
-    let income_total = totals
-        .get(&model::Category::Income)
-        .copied()
-        .unwrap_or(0);
+    let income_total = totals.get(&model::Category::Income).copied().unwrap_or(0);
     println!();
     println!("収入");
     if income_total > 0 {
@@ -541,7 +538,11 @@ fn print_by_category_summary(month: &str, totals: &HashMap<model::Category, i64>
     println!();
 
     // 収入を先頭、支出を以降に表示する
-    let all_categories = [&[model::Category::Income] as &[_], model::EXPENSE_CATEGORIES].concat();
+    let all_categories = [
+        &[model::Category::Income] as &[_],
+        model::EXPENSE_CATEGORIES,
+    ]
+    .concat();
 
     let rows: Vec<(&str, i64)> = all_categories
         .iter()
@@ -553,11 +554,7 @@ fn print_by_category_summary(month: &str, totals: &HashMap<model::Category, i64>
         return;
     }
 
-    println!(
-        "{}{}",
-        pad_display("カテゴリ", 14),
-        right_align("金額", 12),
-    );
+    println!("{}{}", pad_display("カテゴリ", 14), right_align("金額", 12),);
     println!("{}", "─".repeat(26));
     for (name, amount) in &rows {
         println!(
@@ -630,7 +627,10 @@ fn format_amount(amount: i64) -> String {
 mod tests {
     use super::*;
     use crate::{
-        cli::{AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, DeleteArgs, EditArgs, ListArgs, ProgressArgs, SummaryArgs},
+        cli::{
+            AddArgs, BudgetArgs, BudgetCommands, BudgetSetArgs, DeleteArgs, EditArgs, ListArgs,
+            ProgressArgs, SummaryArgs,
+        },
         db,
         model::{Category, Transaction},
         repository,
@@ -1046,9 +1046,17 @@ mod tests {
         assert_eq!(format_signed_amount(0), "+0円");
     }
 
-    fn budget_set_args(total: Option<i64>, category: Option<Category>, amount: Option<i64>) -> BudgetArgs {
+    fn budget_set_args(
+        total: Option<i64>,
+        category: Option<Category>,
+        amount: Option<i64>,
+    ) -> BudgetArgs {
         BudgetArgs {
-            command: BudgetCommands::Set(BudgetSetArgs { total, category, amount }),
+            command: BudgetCommands::Set(BudgetSetArgs {
+                total,
+                category,
+                amount,
+            }),
         }
     }
 
@@ -1071,7 +1079,11 @@ mod tests {
     async fn run_budget_set_category_inserts_budget() -> anyhow::Result<()> {
         let conn = setup_db().await?;
 
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
+        run_budget(
+            &conn,
+            budget_set_args(None, Some(Category::Food), Some(40000)),
+        )
+        .await?;
 
         let budgets = repository::list_budgets(&conn, CLI_USER_ID).await?;
         assert_eq!(budgets.len(), 1);
@@ -1121,7 +1133,13 @@ mod tests {
     async fn run_budget_show_with_empty_table_returns_ok() -> anyhow::Result<()> {
         let conn = setup_db().await?;
 
-        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show }).await;
+        let result = run_budget(
+            &conn,
+            BudgetArgs {
+                command: BudgetCommands::Show,
+            },
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
@@ -1132,16 +1150,30 @@ mod tests {
     async fn run_budget_show_with_budgets_returns_ok() -> anyhow::Result<()> {
         let conn = setup_db().await?;
         run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
+        run_budget(
+            &conn,
+            budget_set_args(None, Some(Category::Food), Some(40000)),
+        )
+        .await?;
 
-        let result = run_budget(&conn, BudgetArgs { command: BudgetCommands::Show }).await;
+        let result = run_budget(
+            &conn,
+            BudgetArgs {
+                command: BudgetCommands::Show,
+            },
+        )
+        .await;
 
         assert!(result.is_ok());
         Ok(())
     }
 
     fn default_progress_args() -> ProgressArgs {
-        ProgressArgs { total: false, by_category: false, last_month: false }
+        ProgressArgs {
+            total: false,
+            by_category: false,
+            last_month: false,
+        }
     }
 
     // 正常系: progress（デフォルト）が予算設定済みで Ok を返すこと
@@ -1149,7 +1181,11 @@ mod tests {
     async fn run_progress_default_mode_with_budgets_returns_ok() -> anyhow::Result<()> {
         let conn = setup_db().await?;
         run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
+        run_budget(
+            &conn,
+            budget_set_args(None, Some(Category::Food), Some(40000)),
+        )
+        .await?;
         run_add(
             &conn,
             AddArgs {
@@ -1174,7 +1210,11 @@ mod tests {
         let conn = setup_db().await?;
         run_budget(&conn, budget_set_args(Some(150000), None, None)).await?;
 
-        let args = ProgressArgs { total: true, by_category: false, last_month: false };
+        let args = ProgressArgs {
+            total: true,
+            by_category: false,
+            last_month: false,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_ok());
@@ -1185,9 +1225,17 @@ mod tests {
     #[tokio::test]
     async fn run_progress_by_category_with_budget_returns_ok() -> anyhow::Result<()> {
         let conn = setup_db().await?;
-        run_budget(&conn, budget_set_args(None, Some(Category::Food), Some(40000))).await?;
+        run_budget(
+            &conn,
+            budget_set_args(None, Some(Category::Food), Some(40000)),
+        )
+        .await?;
 
-        let args = ProgressArgs { total: false, by_category: true, last_month: false };
+        let args = ProgressArgs {
+            total: false,
+            by_category: true,
+            last_month: false,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_ok());
@@ -1199,7 +1247,11 @@ mod tests {
     async fn run_progress_total_without_budget_returns_error() -> anyhow::Result<()> {
         let conn = setup_db().await?;
 
-        let args = ProgressArgs { total: true, by_category: false, last_month: false };
+        let args = ProgressArgs {
+            total: true,
+            by_category: false,
+            last_month: false,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_err());
@@ -1211,7 +1263,11 @@ mod tests {
     async fn run_progress_by_category_without_budget_returns_error() -> anyhow::Result<()> {
         let conn = setup_db().await?;
 
-        let args = ProgressArgs { total: false, by_category: true, last_month: false };
+        let args = ProgressArgs {
+            total: false,
+            by_category: true,
+            last_month: false,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-04").await;
 
         assert!(result.is_err());
@@ -1234,7 +1290,11 @@ mod tests {
         )
         .await?;
 
-        let args = ProgressArgs { total: false, by_category: false, last_month: true };
+        let args = ProgressArgs {
+            total: false,
+            by_category: false,
+            last_month: true,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-05").await;
 
         assert!(result.is_ok());
@@ -1246,7 +1306,11 @@ mod tests {
     async fn run_progress_last_month_without_data_shows_na() -> anyhow::Result<()> {
         let conn = setup_db().await?;
 
-        let args = ProgressArgs { total: false, by_category: false, last_month: true };
+        let args = ProgressArgs {
+            total: false,
+            by_category: false,
+            last_month: true,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-05").await;
 
         assert!(result.is_ok());
@@ -1269,7 +1333,11 @@ mod tests {
         )
         .await?;
 
-        let args = ProgressArgs { total: false, by_category: false, last_month: true };
+        let args = ProgressArgs {
+            total: false,
+            by_category: false,
+            last_month: true,
+        };
         let result = run_progress_for_month(&conn, &args, "2025-05").await;
 
         assert!(result.is_ok());

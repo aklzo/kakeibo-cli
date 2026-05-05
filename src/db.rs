@@ -18,7 +18,9 @@ pub async fn open() -> anyhow::Result<Connection> {
         .build()
         .await
         .context("データベースへの接続に失敗しました")?;
-    let conn = db.connect().context("データベース接続の取得に失敗しました")?;
+    let conn = db
+        .connect()
+        .context("データベース接続の取得に失敗しました")?;
     migrate(&conn).await?;
     Ok(conn)
 }

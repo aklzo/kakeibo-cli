@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use libsql::{Connection, Value};
 
 use crate::model::{Budget, Category, Transaction};
@@ -57,7 +57,9 @@ fn row_to_transaction(row: &libsql::Row) -> anyhow::Result<Transaction> {
         date: row.get(4).context("date カラムの取得に失敗しました")?,
         category,
         memo: row.get(6).context("memo カラムの取得に失敗しました")?,
-        created_at: row.get(7).context("created_at カラムの取得に失敗しました")?,
+        created_at: row
+            .get(7)
+            .context("created_at カラムの取得に失敗しました")?,
     })
 }
 
@@ -196,10 +198,12 @@ pub struct NewBudget {
 
 fn row_to_budget(row: &libsql::Row) -> anyhow::Result<Budget> {
     // SELECT id, user_id, month, category, amount
-    let category_str: Option<String> =
-        row.get(3).context("category カラムの取得に失敗しました")?;
+    let category_str: Option<String> = row.get(3).context("category カラムの取得に失敗しました")?;
     let category = category_str
-        .map(|s| s.parse::<Category>().context("DBのカテゴリ値を解析できませんでした"))
+        .map(|s| {
+            s.parse::<Category>()
+                .context("DBのカテゴリ値を解析できませんでした")
+        })
         .transpose()?;
     Ok(Budget {
         id: row.get(0).context("id カラムの取得に失敗しました")?,
@@ -540,7 +544,11 @@ mod tests {
 
         let budget = set_budget(
             &conn,
-            &NewBudget { user_id: "local".to_string(), category: None, amount: 150000 },
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: None,
+                amount: 150000,
+            },
         )
         .await?;
 
@@ -576,13 +584,21 @@ mod tests {
         let conn = setup_db().await?;
         set_budget(
             &conn,
-            &NewBudget { user_id: "local".to_string(), category: None, amount: 100000 },
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: None,
+                amount: 100000,
+            },
         )
         .await?;
 
         set_budget(
             &conn,
-            &NewBudget { user_id: "local".to_string(), category: None, amount: 150000 },
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: None,
+                amount: 150000,
+            },
         )
         .await?;
 
@@ -599,7 +615,11 @@ mod tests {
         let conn = setup_db().await?;
         set_budget(
             &conn,
-            &NewBudget { user_id: "local".to_string(), category: None, amount: 150000 },
+            &NewBudget {
+                user_id: "local".to_string(),
+                category: None,
+                amount: 150000,
+            },
         )
         .await?;
         set_budget(
