@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["aklzo"]
 description = "個人用CLI家計簿アプリ"
+default-run = "kakeibo"
 
 [[bin]]
 name = "kakeibo"
