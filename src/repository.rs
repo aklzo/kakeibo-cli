@@ -247,7 +247,10 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
         (None, Some(cat)) => {
             conn.execute(
                 "DELETE FROM budgets WHERE user_id = ?1 AND month IS NULL AND category = ?2",
-                vec![Value::Text(new_budget.user_id.clone()), Value::Text(cat.clone())],
+                vec![
+                    Value::Text(new_budget.user_id.clone()),
+                    Value::Text(cat.clone()),
+                ],
             )
             .await
             .context("既存のカテゴリ予算の削除に失敗しました")?;
@@ -255,7 +258,10 @@ pub async fn set_budget(conn: &Connection, new_budget: &NewBudget) -> anyhow::Re
         (Some(month), None) => {
             conn.execute(
                 "DELETE FROM budgets WHERE user_id = ?1 AND month = ?2 AND category IS NULL",
-                vec![Value::Text(new_budget.user_id.clone()), Value::Text(month.clone())],
+                vec![
+                    Value::Text(new_budget.user_id.clone()),
+                    Value::Text(month.clone()),
+                ],
             )
             .await
             .context("既存の月別全体予算の削除に失敗しました")?;
