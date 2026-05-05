@@ -9,6 +9,7 @@ mod repository;
 
 use std::collections::HashMap;
 
+use anyhow::Context;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -40,11 +41,12 @@ async fn main() -> anyhow::Result<()> {
 
     // リリースビルドでは GOOGLE_CLIENT_ID を必須とする。
     // デバッグビルドでは未設定時は空文字（SKIP_AUTH=true で開発する想定）。
-    #[cfg(not(debug_assertions))]
-    let client_id = std::env::var("GOOGLE_CLIENT_ID")
-        .context("GOOGLE_CLIENT_ID 環境変数が設定されていません")?;
-    #[cfg(debug_assertions)]
-    let client_id = std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+    let client_id = if cfg!(debug_assertions) {
+        std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default()
+    } else {
+        std::env::var("GOOGLE_CLIENT_ID")
+            .context("GOOGLE_CLIENT_ID 環境変数が設定されていません")?
+    };
 
     let state = AppState { conn, client_id };
 
