@@ -26,6 +26,8 @@ pub enum Commands {
     Budget(BudgetArgs),
     /// 消費進捗率を表示する
     Progress(ProgressArgs),
+    /// 利用可能なカテゴリの一覧を表示する
+    Categories,
 }
 
 /// `add` サブコマンドの引数

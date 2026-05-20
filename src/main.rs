@@ -14,6 +14,24 @@ use cli::{
     ListArgs, ProgressArgs, SummaryArgs,
 };
 
+/// カテゴリ識別子と日本語名の対応表。
+const ALL_CATEGORIES: &[(&str, &str)] = &[
+    ("fixed", "固定費"),
+    ("subscription", "サブスク"),
+    ("food", "食費"),
+    ("daily", "日用品"),
+    ("transport", "交通費"),
+    ("clothing", "被服費"),
+    ("medical", "医療費"),
+    ("beauty", "美容費"),
+    ("social", "交際費"),
+    ("special", "特別日"),
+    ("learning", "学習"),
+    ("hobby", "趣味"),
+    ("interior", "インテリア費"),
+    ("income", "収入"),
+];
+
 const CLI_USER_ID: &str = "local";
 
 #[tokio::main]
@@ -28,7 +46,17 @@ async fn main() -> anyhow::Result<()> {
         Commands::Summary(args) => run_summary(&conn, args).await,
         Commands::Budget(args) => run_budget(&conn, args).await,
         Commands::Progress(args) => run_progress(&conn, args).await,
+        Commands::Categories => run_categories(),
     }
+}
+
+fn run_categories() -> anyhow::Result<()> {
+    println!("{:<14}  名称", "識別子");
+    println!("{}", "─".repeat(26));
+    for (id, name) in ALL_CATEGORIES {
+        println!("{:<14}  {}", id, name);
+    }
+    Ok(())
 }
 
 async fn run_add(conn: &Connection, args: AddArgs) -> anyhow::Result<()> {
