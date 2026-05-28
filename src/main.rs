@@ -36,6 +36,7 @@ const CLI_USER_ID: &str = "local";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     let cli = Cli::parse();
     let conn = db::open().await?;
     match cli.command {
