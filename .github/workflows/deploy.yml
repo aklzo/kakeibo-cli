@@ -1,5 +1,7 @@
 name: Deploy to Cloud Run
 
+# main は直接 push を禁止している（GitHub ルールセット）ため、
+# main への push は PR のマージ時のみ発生する = マージ時のみデプロイされる。
 on:
   push:
     branches:
@@ -33,11 +35,9 @@ jobs:
       # Artifact Registry のイメージパス
       # 事前に `gcloud artifacts repositories create kakeibo --repository-format=docker --location=asia-northeast1` で作成しておくこと
       IMAGE: asia-northeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/kakeibo/kakeibo-api
-      # Node.js 24 への移行テスト（2026年6月のデフォルト変更に先行対応）
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Workload Identity Federation で認証
       # 必要な GitHub Secrets:
@@ -46,13 +46,13 @@ jobs:
       #   WIF_SERVICE_ACCOUNT  : github-actions@<project>.iam.gserviceaccount.com
       #   GOOGLE_CLIENT_ID     : OAuth 2.0 クライアント ID（Cloud Run の環境変数として渡す）
       - id: auth
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: 'access_token'
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: asia-northeast1-docker.pkg.dev
           username: oauth2accesstoken
@@ -68,7 +68,7 @@ jobs:
           docker push ${{ env.IMAGE }}:latest
 
       - name: Deploy to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@251330ba9a8a34bfbc1622895f42e1d53fd14522 # v2.7.6
+        uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3.0.1
         with:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
