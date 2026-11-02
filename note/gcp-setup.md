@@ -87,6 +87,9 @@ gcloud artifacts repositories create kakeibo \
 gcloud artifacts repositories list
 ```
 
+イメージはデプロイのたびに増えるため、古いものを自動で削除するクリーンアップポリシーを設定している。
+手順は [artifact-registry-cleanup.md](artifact-registry-cleanup.md) を参照。
+
 ---
 
 ## ステップ⑥ OAuth 2.0 クライアント ID の作成
