@@ -164,5 +164,5 @@ cargo run -- add --name "テスト" --amount 1000 --category food
 SKIP_AUTH=true cargo run --bin kakeibo-api
 
 # API サーバーの起動（Turso 接続・認証あり）
-DATABASE_URL=<turso_url> AUTH_TOKEN=<token> GOOGLE_CLIENT_ID=<client_id> cargo run --bin kakeibo-api
+DATABASE_URL=<turso_url> AUTH_TOKEN=<token> GOOGLE_CLIENT_ID=<client_id> ALLOWED_USER_IDS=<your_sub> cargo run --bin kakeibo-api
 ```

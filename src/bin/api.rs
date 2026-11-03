@@ -20,18 +20,28 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use auth::{AuthUser, HasClientId};
+use auth::{AllowedUsers, AuthUser, HasAllowedUsers, HasClientId};
 use model::{Category, EXPENSE_CATEGORIES};
+
+/// API の利用を許可する Google アカウント（`sub`）をカンマ区切りで指定する環境変数。
+const ALLOWED_USER_IDS_ENV: &str = "ALLOWED_USER_IDS";
 
 #[derive(Clone)]
 struct AppState {
     conn: libsql::Connection,
     client_id: String,
+    allowed_users: AllowedUsers,
 }
 
 impl HasClientId for AppState {
     fn client_id(&self) -> &str {
         &self.client_id
+    }
+}
+
+impl HasAllowedUsers for AppState {
+    fn allowed_users(&self) -> &AllowedUsers {
+        &self.allowed_users
     }
 }
 
@@ -48,7 +58,23 @@ async fn main() -> anyhow::Result<()> {
             .context("GOOGLE_CLIENT_ID 環境変数が設定されていません")?
     };
 
-    let state = AppState { conn, client_id };
+    // リリースビルドでは ALLOWED_USER_IDS を必須とする（未設定で全員に開放しないため）。
+    // デバッグビルドでは未設定時は誰も許可しない（SKIP_AUTH=true で開発する想定）。
+    let allowed_users = match std::env::var(ALLOWED_USER_IDS_ENV) {
+        Ok(raw) => AllowedUsers::parse(&raw)
+            .with_context(|| format!("{ALLOWED_USER_IDS_ENV} 環境変数の値が不正です"))?,
+        Err(_) if cfg!(debug_assertions) => AllowedUsers::deny_all(),
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("{ALLOWED_USER_IDS_ENV} 環境変数が設定されていません"));
+        }
+    };
+
+    let state = AppState {
+        conn,
+        client_id,
+        allowed_users,
+    };
 
     let app = Router::new()
         .route(
