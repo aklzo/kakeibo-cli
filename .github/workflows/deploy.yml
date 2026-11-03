@@ -73,6 +73,10 @@ jobs:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
           image: ${{ env.IMAGE }}:${{ github.sha }}
-          flags: '--allow-unauthenticated' # IAM 認証はスキップ、アプリ層で Google ID Token 検証
+          # --allow-unauthenticated : IAM 認証はスキップ、アプリ層で Google ID Token と許可リストを検証
+          # --service-account       : GCP ロールを持たない専用 SA で実行（既定の compute SA は Editor 権限を持つため使わない）
+          # --max-instances=1       : 個人利用のため 1 台で十分。大量アクセス時の課金上限を抑える
+          # ALLOWED_USER_IDS / DATABASE_URL / AUTH_TOKEN は Cloud Run に手動設定済み（env_vars の既定 merge で保持される）
+          flags: '--allow-unauthenticated --service-account=kakeibo-api-runtime@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=1'
           env_vars: |
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}

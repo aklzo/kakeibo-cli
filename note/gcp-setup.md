@@ -172,7 +172,10 @@ gcloud run services list
 
 `--no-allow-unauthenticated` により Google 認証が必須になる。
 
-> **注意**: `GOOGLE_CLIENT_ID` を指定しないとリリースビルドの起動時にエラーとなり、
+> **補足**: 現在の GitHub Actions のデプロイは `--allow-unauthenticated` で行っている。
+> Cloud Run の IAM 認証は使わず、アプリ層で Google ID Token と許可リスト（ステップ⑪）を検証する構成。
+
+> **注意**: `GOOGLE_CLIENT_ID` と `ALLOWED_USER_IDS`（ステップ⑪）を指定しないとリリースビルドの起動時にエラーとなり、
 > Cloud Run が「コンテナがポートを listen しなかった」として失敗する。
 
 ---
@@ -324,6 +327,63 @@ Value: <turso-token>
 
 ---
 
+## ステップ⑪ 実行用サービスアカウントと許可リストの設定
+
+### 実行用サービスアカウント
+
+既定の compute SA は Editor 権限を持つため、Cloud Run の実行には権限のない専用 SA を使う。
+API は Google の公開鍵の取得と Turso への接続しか行わず、GCP の API を呼ばないので、**GCP のロールは付けない**。
+
+```bash
+gcloud iam service-accounts create kakeibo-api-runtime \
+  --display-name="kakeibo-api runtime" \
+  --project=<project-id>
+
+# GitHub Actions の SA が、この SA を指定してデプロイできるようにする（SA 単位で付与）
+gcloud iam service-accounts add-iam-policy-binding \
+  kakeibo-api-runtime@<project-id>.iam.gserviceaccount.com \
+  --member="serviceAccount:github-actions@<project-id>.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser" \
+  --project=<project-id>
+```
+
+`deploy.yml` の `--service-account` でこの SA を指定している。
+SA 単位で付与したので、ステップ⑧でプロジェクト全体に付けた `roles/iam.serviceAccountUser` は不要になる。
+デプロイが通ることを確認したら外す。
+
+```bash
+gcloud projects remove-iam-policy-binding <project-id> \
+  --member="serviceAccount:github-actions@<project-id>.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+```
+
+### 許可リスト（ALLOWED_USER_IDS）
+
+API を使えるのは `ALLOWED_USER_IDS` に指定した Google アカウント（`sub`）だけ（`docs/adr.md` の ADR-013）。
+`sub` は画面やログに出さないよう、取得から設定までをシェル変数で受け渡す。
+gcloud でログインしているアカウントが、Android アプリで使うアカウントと同じであること。
+
+```bash
+SUB=$(curl -s "https://oauth2.googleapis.com/tokeninfo?id_token=$(gcloud auth print-identity-token)" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["sub"])')
+gcloud run services update kakeibo-api \
+  --region asia-northeast1 \
+  --update-env-vars "ALLOWED_USER_IDS=${SUB}"
+unset SUB
+```
+
+値を表示せずに、設定されたことだけを確認する。
+
+```bash
+gcloud run services describe kakeibo-api --region asia-northeast1 \
+  --format="value(spec.template.spec.containers[0].env[].name)"
+# → ALLOWED_USER_IDS が含まれていればよい
+```
+
+> **注意**: リリースビルドは `ALLOWED_USER_IDS` がないと起動しない。許可リスト対応のコードをデプロイする前に設定すること。
+
+---
+
 ## 手順まとめ
 
 | ステップ | 作業 | 方法 |
@@ -338,6 +398,7 @@ Value: <turso-token>
 | ⑧ | サービスアカウント・WIF 設定 | CLI |
 | ⑨ | GitHub Secrets 設定 | ブラウザ |
 | ⑩ | Turso セットアップ | CLI |
+| ⑪ | 実行用 SA・許可リスト設定 | CLI |
 
 ブラウザが必要な箇所は①⑥⑨。
 
