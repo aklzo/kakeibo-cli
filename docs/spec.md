@@ -39,15 +39,21 @@
 kakeibo add --name "UberEats" --amount 1500 --category food
 kakeibo add --name "UberEats" --amount 1500 --category food --date 2025-04-30
 kakeibo add --name "UberEats" --amount 1500 --category food --memo "夕食"
+
+# 定型取引（2-9 参照）の内容で登録する
+kakeibo add --preset commute
+kakeibo add --preset commute --date 2026-11-14
+kakeibo add --preset commute --amount 320 --memo "片道のみ"   # 指定した項目だけ上書き
 ```
 
 | オプション | 短縮形 | 必須 | デフォルト |
 |-----------|--------|------|-----------|
-| `--name` | `-n` | ✓ | - |
-| `--amount` | `-a` | ✓ | - |
-| `--category` | `-c` | ✓ | - |
+| `--name` | `-n` | ✓（`--preset` 指定時は省略可） | `--preset` 指定時は定型取引の値 |
+| `--amount` | `-a` | ✓（`--preset` 指定時は省略可） | `--preset` 指定時は定型取引の値 |
+| `--category` | `-c` | ✓（`--preset` 指定時は省略可） | `--preset` 指定時は定型取引の値 |
 | `--date` | `-d` | - | 実行日 |
-| `--memo` | `-m` | - | なし |
+| `--memo` | `-m` | - | `--preset` 指定時は定型取引の値、それ以外はなし |
+| `--preset` | `-p` | - | なし |
 
 ### 2-2. 取引の一覧表示
 
@@ -175,6 +181,60 @@ kakeibo budget show                           # 現在の予算設定を表示
 
 予算は月を指定しない場合、全月共通のデフォルト予算として登録される。
 
+### 2-9. 定型取引（プリセット）
+
+出社時の交通費のように、名称・金額・カテゴリが毎回同じ取引をひな形として登録しておく。
+`kakeibo add --preset <キー>` で、ひな形の値をコピーして通常の取引として登録する。
+
+```bash
+kakeibo preset add commute --name "通勤（本社）" --amount 640 --category transport
+kakeibo preset add commute-shinagawa --name "通勤（品川）" --amount 820 --category transport
+kakeibo preset edit commute --amount 700        # 運賃改定・引越しなどで金額が変わった
+kakeibo preset list
+kakeibo preset delete commute-shinagawa
+```
+
+**`preset add` の引数：**
+
+| 引数・オプション | 短縮形 | 必須 | 備考 |
+|-----------------|--------|------|------|
+| `<KEY>` | - | ✓ | 定型取引の識別子（`add --preset` で指定する値） |
+| `--name` | `-n` | ✓ | 登録する取引の名称 |
+| `--amount` | `-a` | ✓ | 登録する取引の金額 |
+| `--category` | `-c` | ✓ | 登録する取引のカテゴリ |
+| `--memo` | `-m` | - | 登録する取引のメモ |
+
+**`preset edit` の引数：** `<KEY>` に加え、`--name` / `--amount` / `--category` / `--memo` のうち変更したい項目だけを指定する（複数同時指定可）。
+
+**`preset list` の出力例：**
+```
+キー               名称           金額    カテゴリ
+──────────────────────────────────────────────
+commute            通勤（本社）    700円  交通費
+commute-shinagawa  通勤（品川）    820円  交通費
+```
+
+**動作の仕様：**
+
+- `add --preset` は定型取引の値を取引にコピーして登録する。登録後の取引と定型取引は紐付けない
+- 定型取引を編集・削除しても、登録済みの取引は変わらない
+- 定型取引が保持する金額は現在の値のみとする（適用開始日による金額の履歴は持たない）
+- 汎用の仕組みとし、交通費以外の定型的な取引（ジムの会費など）にも使える
+
+**通勤交通費での使い方：**
+
+| 場面 | 操作 |
+|------|------|
+| 通常のオフィスに出社した | `kakeibo add --preset commute` |
+| 運賃改定・引越しで金額が変わった | `kakeibo preset edit commute --amount 700`（以降の登録から新しい金額になる） |
+| 別のオフィスに繰り返し行く | オフィスごとに定型取引を追加し `--preset commute-shinagawa` で登録 |
+| 別のオフィスに一度だけ行く | 定型取引を作らず、通常の `add`（`--category transport`）で登録 |
+| 片道だけ・途中下車などで金額が違う日 | `--preset commute --amount 320` で金額だけ上書き |
+| 運賃改定前の日付をあとから登録する | `--preset commute --amount <旧運賃>` で金額を指定 |
+
+キー名は、将来の Claude 連携（MCP）で Claude が定型取引を選ぶ手がかりにもなる。
+通常のオフィスは `commute`、それ以外は `commute-<場所>` のように付けることを推奨する。
+
 ---
 
 ## 3. データ設計
@@ -202,6 +262,18 @@ kakeibo budget show                           # 現在の予算設定を表示
 | category | TEXT | NULL の場合は月全体の予算 |
 | amount | INTEGER NOT NULL | 上限金額（円） |
 
+### presets テーブル
+
+| カラム | 型 | 備考 |
+|-------|-----|------|
+| id | INTEGER PRIMARY KEY | 自動採番 |
+| user_id | TEXT NOT NULL | Google アカウントの `sub` クレーム（CLI では `'local'`） |
+| key | TEXT NOT NULL | 定型取引の識別子。`(user_id, key)` で一意（UNIQUE 制約） |
+| name | TEXT NOT NULL | 登録する取引の名称 |
+| amount | INTEGER NOT NULL | 登録する取引の金額（円、正の整数） |
+| category | TEXT NOT NULL | 登録する取引のカテゴリ識別子 |
+| memo | TEXT | 登録する取引のメモ（任意） |
+
 ---
 
 ## 4. 制約・境界条件
@@ -213,6 +285,11 @@ kakeibo budget show                           # 現在の予算設定を表示
 - `progress` コマンドは予算未設定時にエラーを表示して終了する
 - `progress --last-month` は昨月の支出データが 0（取引なし・収入のみ）の場合、進捗率を N/A として表示する
 - カテゴリは上記一覧の識別子のみ受け付ける（任意文字列は不可）
+- 定型取引のキーは英小文字・数字・ハイフンのみ、1〜32 文字とする
+- 同じキーの定型取引は 1 ユーザーにつき 1 件まで（既存のキーで `preset add` した場合はエラー）
+- 存在しないキーを `add --preset` / `preset edit` / `preset delete` に指定した場合はエラー
+- 定型取引の金額にも、取引と同じ制約（正の整数のみ）を適用する
+- `add --preset` で上書きした値にも、通常の `add` と同じ制約を適用する
 
 ---
 
@@ -224,6 +301,15 @@ kakeibo budget show                           # 現在の予算設定を表示
 - [x] カテゴリ別集計（summary --by-category）
 - [x] 消費進捗率（progress）
 - [x] 予算設定（budget）
+
+### フェーズ4（定型取引）
+- [ ] presets テーブル・リポジトリ層
+- [ ] 定型取引の管理（preset add / edit / list / delete）
+- [ ] 定型取引からの登録（add --preset）
+
+### 将来課題（定型取引）
+- [ ] 定型取引の REST API と Android の設定画面
+- [ ] 適用開始日による金額の履歴（運賃改定前の日付を後から登録する頻度が高い場合）
 
 ### 将来課題（CLI）
 - [ ] グラフ描画（`ratatui` による棒グラフ）
