@@ -39,6 +39,8 @@
 kakeibo add --name "UberEats" --amount 1500 --category food
 kakeibo add --name "UberEats" --amount 1500 --category food --date 2025-04-30
 kakeibo add --name "UberEats" --amount 1500 --category food --memo "夕食"
+kakeibo add --preset commute                                  # 定型取引（2-9）の値で登録
+kakeibo add --preset commute --amount 320 --memo "片道のみ"    # 一部の値だけ上書き
 ```
 
 | オプション | 短縮形 | 必須 | デフォルト |
@@ -48,6 +50,9 @@ kakeibo add --name "UberEats" --amount 1500 --category food --memo "夕食"
 | `--category` | `-c` | ✓ | - |
 | `--date` | `-d` | - | 実行日 |
 | `--memo` | `-m` | - | なし |
+| `--preset` | `-p` | - | なし |
+
+`--preset` を指定した場合は `--name` / `--amount` / `--category` も省略でき、省略した項目には定型取引の値を使う。
 
 ### 2-2. 取引の一覧表示
 
@@ -175,6 +180,51 @@ kakeibo budget show                           # 現在の予算設定を表示
 
 予算は月を指定しない場合、全月共通のデフォルト予算として登録される。
 
+### 2-9. 定型取引
+
+名称・金額・カテゴリが毎回同じ取引（出社時の交通費など）を、キー付きのひな形として登録しておく。
+
+```bash
+kakeibo preset add commute --name "通勤（本社）" --amount 640 --category transport
+kakeibo preset edit commute --amount 700
+kakeibo preset list
+kakeibo preset delete commute
+```
+
+| 引数・オプション | 短縮形 | `preset add` | `preset edit` |
+|-----------------|--------|--------------|---------------|
+| `<KEY>` | - | ✓ | ✓ |
+| `--name` | `-n` | ✓ | - |
+| `--amount` | `-a` | ✓ | - |
+| `--category` | `-c` | ✓ | - |
+| `--memo` | `-m` | - | - |
+
+✓ は必須を表す。`preset edit` は指定した項目だけを上書きする。
+
+#### `preset list` の出力例
+
+```
+キー               名称           金額    カテゴリ
+──────────────────────────────────────────────
+commute            通勤（本社）    700円  交通費
+commute-shinagawa  通勤（品川）    820円  交通費
+```
+
+`add --preset` は定型取引の値をコピーして取引を登録する。そのため、定型取引を編集・削除しても登録済みの取引は変わらない。定型取引は現在の金額だけを持ち、金額の履歴は持たない。
+
+#### 通勤交通費の運用例
+
+| 場面 | 操作 |
+|------|------|
+| 通常のオフィスに出社した | `kakeibo add --preset commute` |
+| 運賃改定・引越しで金額が変わった | `kakeibo preset edit commute --amount 700`（以降の登録から反映） |
+| 別のオフィスに繰り返し行く | オフィスごとに定型取引を追加する（例: `commute-shinagawa`） |
+| 別のオフィスに一度だけ行く | 定型取引を作らず、通常の `add` で登録する |
+| 片道だけなど金額が違う日 | `kakeibo add --preset commute --amount 320` |
+| 運賃改定前の日付をあとから登録する | `kakeibo add --preset commute --date <日付> --amount <旧運賃>` |
+
+キーは将来の Claude 連携（MCP）で、Claude が定型取引を選ぶ手がかりにもなる。通常のオフィスは `commute`、それ以外は `commute-<場所>` とすることを推奨する。
+
 ---
 
 ## 3. データ設計
@@ -202,6 +252,18 @@ kakeibo budget show                           # 現在の予算設定を表示
 | category | TEXT | NULL の場合は月全体の予算 |
 | amount | INTEGER NOT NULL | 上限金額（円） |
 
+### presets テーブル
+
+| カラム | 型 | 備考 |
+|-------|-----|------|
+| id | INTEGER PRIMARY KEY | 自動採番 |
+| user_id | TEXT NOT NULL | Google アカウントの `sub` クレーム（CLI では `'local'`） |
+| key | TEXT NOT NULL | 定型取引の識別子。`(user_id, key)` で一意 |
+| name | TEXT NOT NULL | 名称 |
+| amount | INTEGER NOT NULL | 金額（円、正の整数） |
+| category | TEXT NOT NULL | カテゴリ識別子 |
+| memo | TEXT | メモ（任意） |
+
 ---
 
 ## 4. 制約・境界条件
@@ -213,6 +275,10 @@ kakeibo budget show                           # 現在の予算設定を表示
 - `progress` コマンドは予算未設定時にエラーを表示して終了する
 - `progress --last-month` は昨月の支出データが 0（取引なし・収入のみ）の場合、進捗率を N/A として表示する
 - カテゴリは上記一覧の識別子のみ受け付ける（任意文字列は不可）
+- 定型取引のキーは英小文字・数字・ハイフンのみ、1〜32 文字とする
+- 既存のキーで `preset add` した場合はエラーとする
+- 存在しないキーを `add --preset`・`preset edit`・`preset delete` に指定した場合はエラーとする
+- 定型取引の値と、`add --preset` で上書きした値にも、取引と同じ制約を適用する
 
 ---
 
@@ -224,6 +290,15 @@ kakeibo budget show                           # 現在の予算設定を表示
 - [x] カテゴリ別集計（summary --by-category）
 - [x] 消費進捗率（progress）
 - [x] 予算設定（budget）
+
+### フェーズ4（定型取引）
+- [ ] presets テーブル・リポジトリ層
+- [ ] 定型取引の管理（preset add / edit / list / delete）
+- [ ] 定型取引からの登録（add --preset）
+
+### 将来課題（定型取引）
+- [ ] 定型取引の REST API と Android の設定画面
+- [ ] 金額の履歴（適用開始日）
 
 ### 将来課題（CLI）
 - [ ] グラフ描画（`ratatui` による棒グラフ）
